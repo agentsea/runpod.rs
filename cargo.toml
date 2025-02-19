@@ -1,11 +1,11 @@
 [package]
-name = "runpod-client"
+name = "runpod"
 version = "0.1.1"
 edition = "2021"
 description = "A Rust client for the RunPod API"
 license = "MIT"
 repository = "https://github.com/agentsea/runpod.rs"
-documentation = "https://docs.rs/runpod-client"
+documentation = "https://docs.rs/runpod"
 readme = "README.md"
 keywords = ["runpod", "api-client", "gpu", "cloud"]
 categories = ["api-bindings", "web-programming::http-client"]

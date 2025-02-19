@@ -17,13 +17,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-runpod-client = "0.1.0"
+runpod = "0.1.1"
 ```
 
 ## Quick Start
 
 ```rust
-use runpod_client::{RunpodClient, CreateOnDemandPodRequest};
+use runpod::{RunpodClient, CreateOnDemandPodRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), reqwest::Error> {
