@@ -1,0 +1,17 @@
+[package]
+name = "runpod-client"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust client for the RunPod API"
+license = "MIT"
+repository = "https://github.com/agentsea/runpod.rs"
+documentation = "https://docs.rs/runpod-client"
+readme = "README.md"
+keywords = ["runpod", "api-client", "gpu", "cloud"]
+categories = ["api-bindings", "web-programming::http-client"]
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
