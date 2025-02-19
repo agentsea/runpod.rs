@@ -1,6 +1,6 @@
 # runpod.rs
 
-A Rust client library for the RunPod API, providing programmatic access to RunPod's GPU cloud services.
+A Rust client library for the RunPod API
 
 ## Features
 
