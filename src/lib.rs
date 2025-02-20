@@ -110,7 +110,7 @@ impl RunpodClient {
     //  B.1) Pods
     // -------------------------------------------------------------------------
     /// Create an **on-demand** (reserved) Pod using the REST API.
-    pub async fn create_on_demand_pod_rest(
+    pub async fn create_on_demand_pod(
         &self,
         req: CreateOnDemandPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
@@ -131,7 +131,7 @@ impl RunpodClient {
     }
 
     /// Create a **spot/interruptible** Pod using the REST API.
-    pub async fn create_spot_pod_rest(
+    pub async fn create_spot_pod(
         &self,
         req: CreateSpotPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
@@ -151,10 +151,7 @@ impl RunpodClient {
     }
 
     /// Start (Resume) a Pod. REST does not differentiate on-demand vs. spot.
-    pub async fn start_pod_rest(
-        &self,
-        pod_id: &str,
-    ) -> Result<PodStartResponseData, reqwest::Error> {
+    pub async fn start_pod(&self, pod_id: &str) -> Result<PodStartResponseData, reqwest::Error> {
         let path = format!("pods/{pod_id}/start");
         let resp = self
             .rest_request(Method::POST, &path)
@@ -170,7 +167,7 @@ impl RunpodClient {
     }
 
     /// Stop a Pod.
-    pub async fn stop_pod_rest(&self, pod_id: &str) -> Result<PodStopResponseData, reqwest::Error> {
+    pub async fn stop_pod(&self, pod_id: &str) -> Result<PodStopResponseData, reqwest::Error> {
         let path = format!("pods/{pod_id}/stop");
         let resp = self
             .rest_request(Method::POST, &path)
@@ -189,7 +186,7 @@ impl RunpodClient {
     }
 
     /// List all Pods.
-    pub async fn list_pods_rest(&self) -> Result<PodsListResponseData, reqwest::Error> {
+    pub async fn list_pods(&self) -> Result<PodsListResponseData, reqwest::Error> {
         let resp = self
             .rest_request(Method::GET, "pods")
             .send()
@@ -214,7 +211,7 @@ impl RunpodClient {
     }
 
     /// Get a Pod by ID.
-    pub async fn get_pod_rest(&self, pod_id: &str) -> Result<PodInfoResponseData, reqwest::Error> {
+    pub async fn get_pod(&self, pod_id: &str) -> Result<PodInfoResponseData, reqwest::Error> {
         let path = format!("pods/{pod_id}");
         let resp = self
             .rest_request(Method::GET, &path)
@@ -313,6 +310,80 @@ impl RunpodClient {
         network_volume_id: &str,
     ) -> Result<(), reqwest::Error> {
         let path = format!("networkvolumes/{}", network_volume_id);
+        self.rest_request(Method::DELETE, &path)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    //  B.3) Endpoints
+    // -------------------------------------------------------------------------
+    /// List all Endpoints.
+    pub async fn list_endpoints(&self) -> Result<Endpoints, reqwest::Error> {
+        let resp = self
+            .rest_request(Method::GET, "endpoints")
+            .send()
+            .await?
+            .error_for_status()?;
+
+        // According to the spec, it returns an array of `Endpoint`.
+        // e.g. JSON -> [ {...}, {...} ]
+        let endpoints = resp.json::<Endpoints>().await?;
+        Ok(endpoints)
+    }
+
+    /// Get a specific Endpoint by ID.
+    pub async fn get_endpoint(&self, endpoint_id: &str) -> Result<Endpoint, reqwest::Error> {
+        let path = format!("endpoints/{}", endpoint_id);
+        let resp = self
+            .rest_request(Method::GET, &path)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let endpoint = resp.json::<Endpoint>().await?;
+        Ok(endpoint)
+    }
+
+    /// Create a new Endpoint.
+    pub async fn create_endpoint(
+        &self,
+        req: EndpointCreateInput,
+    ) -> Result<Endpoint, reqwest::Error> {
+        let resp = self
+            .rest_request(Method::POST, "endpoints")
+            .json(&req)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let endpoint = resp.json::<Endpoint>().await?;
+        Ok(endpoint)
+    }
+
+    /// Update (patch) an existing Endpoint by ID.
+    pub async fn update_endpoint(
+        &self,
+        endpoint_id: &str,
+        req: EndpointUpdateInput,
+    ) -> Result<Endpoint, reqwest::Error> {
+        let path = format!("endpoints/{}", endpoint_id);
+        let resp = self
+            .rest_request(Method::PATCH, &path)
+            .json(&req)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let endpoint = resp.json::<Endpoint>().await?;
+        Ok(endpoint)
+    }
+
+    /// Delete an Endpoint by ID.
+    pub async fn delete_endpoint(&self, endpoint_id: &str) -> Result<(), reqwest::Error> {
+        let path = format!("endpoints/{}", endpoint_id);
         self.rest_request(Method::DELETE, &path)
             .send()
             .await?
@@ -563,6 +634,222 @@ pub struct NetworkVolumeUpdateInput {
     // If provided, resize the volume (size must be > current size).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct EndpointResponseData {
+    pub data: Option<Endpoint>,
+    pub errors: Option<Vec<GraphQLError>>, // or your error structure
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct EndpointsListResponseData {
+    pub data: Option<Vec<Endpoint>>,
+    pub errors: Option<Vec<GraphQLError>>,
+}
+
+//
+// 3) Endpoints
+//
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Endpoint {
+    /// Unique ID of the endpoint
+    pub id: String,
+
+    /// The user who created the endpoint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+
+    /// A user-defined name for a Serverless endpoint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// The latest version of a Serverless endpoint (updated whenever the template or env vars change)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i32>,
+
+    /// The compute type: "CPU" or "GPU"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compute_type: Option<String>,
+
+    /// The minimum number of Workers that will always be running
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_min: Option<i32>,
+
+    /// The maximum number of Workers that can be running at the same time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_max: Option<i32>,
+
+    /// If true, flash boot is used
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flashboot: Option<bool>,
+
+    /// The number of seconds a Worker can run without taking a job before being scaled down
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout: Option<i32>,
+
+    /// The maximum number of ms for an individual request before the Worker is stopped
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_timeout_ms: Option<i32>,
+
+    /// The method used to scale up Workers: "QUEUE_DELAY" or "REQUEST_COUNT"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_type: Option<String>,
+
+    /// If scalerType=QUEUE_DELAY, number of seconds before scaling; if REQUEST_COUNT, a divisor for the queue
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_value: Option<i32>,
+
+    /// Number of GPUs attached to each Worker
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_count: Option<i32>,
+
+    /// An ordered list of acceptable GPU types (strings)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_type_ids: Option<Vec<String>>,
+
+    /// A list of acceptable CUDA versions for GPU endpoints
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_cuda_versions: Option<Vec<String>>,
+
+    /// For CPU endpoints only; a list of CPU instance IDs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance_ids: Option<Vec<String>>,
+
+    /// Unique ID of an attached network volume
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_volume_id: Option<String>,
+
+    /// A list of RunPod data center IDs where Workers can be located
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_center_ids: Option<Vec<String>>,
+
+    /// Environment variables for the endpoint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<std::collections::HashMap<String, String>>,
+
+    /// ID of the template used to create this endpoint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
+
+    /// Information about the template (if included in the response)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<Template>,
+
+    /// The UTC timestamp when a Serverless endpoint was created
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+
+    /// Information about the current Workers (if included in the response)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers: Option<Vec<Pod>>,
+}
+
+/// A list of endpoints, as returned by the "GET /endpoints" route.
+pub type Endpoints = Vec<Endpoint>;
+
+/// Fields required when creating a new endpoint via "POST /endpoints".
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointCreateInput {
+    /// According to your OpenAPI, templateId is required
+    pub template_id: String,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_max: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_min: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flashboot: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_timeout_ms: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_value: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_type_ids: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_count: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_cuda_versions: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_center_ids: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_volume_id: Option<String>,
+}
+
+/// Fields for updating an existing endpoint via "PATCH /endpoints/{endpointId}".
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EndpointUpdateInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_max: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workers_min: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flashboot: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_timeout_ms: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_timeout: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_type: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler_value: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_type_ids: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_count: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_cuda_versions: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_center_ids: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_volume_id: Option<String>,
+}
+
+/// Example "Template" struct, if you want to store the template data from an endpoint:
+#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Template {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    // etc.
 }
 
 // -----------------------------------------------------------------------------
