@@ -17,7 +17,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-runpod = "0.1.1"
+runpod = "0.1.2"
 ```
 
 ## Quick Start
