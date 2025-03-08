@@ -96,6 +96,44 @@ impl RunpodClient {
         })
     }
 
+    pub async fn list_available_gpus_with_datacenters(
+        &self,
+    ) -> Result<DatacentersWithGpuTypes, reqwest::Error> {
+        let query = r#"
+            query myself {
+                myself {
+                    datacenters {
+                        id
+                        name
+                        location
+                        available
+                        gpuTypes {
+                            id
+                            displayName
+                            memoryInGb
+                            available
+                            secureCloud
+                            communityCloud
+                            securePrice
+                            communityPrice
+                            communitySpotPrice
+                            secureSpotPrice
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let body = json!({ "query": query });
+
+        let resp: GraphQLResponse<MyselfResponse> = self.graphql_query(&body).await?;
+
+        Ok(DatacentersWithGpuTypes {
+            data: resp.data.map(|d| d.myself.datacenters),
+            errors: resp.errors,
+        })
+    }
+
     // -------------------------------------------------------------------------
     //  B) REST CALLS (for Pods, Network Volumes, etc.)
     // -------------------------------------------------------------------------
@@ -459,6 +497,54 @@ pub struct LowestPrice {
     pub minimum_bid_price: Option<f64>,
     #[serde(rename = "uninterruptablePrice")]
     pub uninterruptable_price: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyselfResponse {
+    pub myself: MyselfData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MyselfData {
+    pub datacenters: Vec<DatacenterWithGpuTypes>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DatacenterWithGpuTypes {
+    pub id: String,
+    pub name: String,
+    pub location: String,
+    pub available: bool,
+    #[serde(rename = "gpuTypes")]
+    pub gpu_types: Vec<DatacenterGpuType>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DatacenterGpuType {
+    pub id: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "memoryInGb")]
+    pub memory_in_gb: f64,
+    pub available: i32,
+    #[serde(rename = "secureCloud")]
+    pub secure_cloud: bool,
+    #[serde(rename = "communityCloud")]
+    pub community_cloud: bool,
+    #[serde(rename = "securePrice")]
+    pub secure_price: Option<f64>,
+    #[serde(rename = "communityPrice")]
+    pub community_price: Option<f64>,
+    #[serde(rename = "communitySpotPrice")]
+    pub community_spot_price: Option<f64>,
+    #[serde(rename = "secureSpotPrice")]
+    pub secure_spot_price: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DatacentersWithGpuTypes {
+    pub data: Option<Vec<DatacenterWithGpuTypes>>,
+    pub errors: Option<Vec<GraphQLError>>,
 }
 
 // -----------------------------------------------------------------------------
