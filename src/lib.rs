@@ -944,57 +944,66 @@ pub struct Template {
 // -----------------------------------------------------------------------------
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CreateOnDemandPodRequest {
-    pub cloud_type: String,
-    pub gpu_count: i32, // not directly used by REST
-    pub volume_in_gb: i32,
-    pub container_disk_in_gb: i32,
-    pub min_vcpu_count: i32,
-    pub min_memory_in_gb: i32,
-    pub gpu_type_id: String,
-    pub name: String,
-    pub image_name: String,
-    pub docker_args: String,
-    pub ports: String,
-    pub volume_mount_path: String,
+    pub cloud_type: Option<String>,
+    pub gpu_count: Option<i32>, // not directly used by REST
+    pub volume_in_gb: Option<i32>,
+    pub container_disk_in_gb: Option<i32>,
+    pub min_vcpu_count: Option<i32>,
+    pub min_memory_in_gb: Option<i32>,
+    pub gpu_type_id: Option<String>,
+    pub name: Option<String>,
+    pub image_name: Option<String>,
+    pub docker_args: Option<String>,
+    pub ports: Option<String>,
+    pub network_volume_id: Option<String>,
+    pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct CreateSpotPodRequest {
     pub bid_per_gpu: f64,
-    pub cloud_type: String,
+    pub cloud_type: Option<String>,
     pub gpu_count: i32,
     pub volume_in_gb: i32,
     pub container_disk_in_gb: i32,
-    pub min_vcpu_count: i32,
-    pub min_memory_in_gb: i32,
+    pub min_vcpu_count: Option<i32>,
+    pub min_memory_in_gb: Option<i32>,
     pub gpu_type_id: String,
     pub name: String,
     pub image_name: String,
-    pub docker_args: String,
-    pub ports: String,
-    pub volume_mount_path: String,
+    pub docker_args: Option<String>,
+    pub ports: Option<String>,
+    pub network_volume_id: Option<String>,
+    pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
 }
 
 impl CreateOnDemandPodRequest {
     pub fn to_pod_create_input(&self, is_spot: bool) -> PodCreateInput {
-        let cloud_type = match self.cloud_type.as_str() {
-            "SECURE" => "SECURE".to_string(),
-            "COMMUNITY" => "COMMUNITY".to_string(),
+        let cloud_type = match self.cloud_type.as_deref() {
+            Some("SECURE") => "SECURE".to_string(),
+            Some("COMMUNITY") => "COMMUNITY".to_string(),
             _ => "SECURE".to_string(),
         };
-        let gpu_type_ids = if self.gpu_type_id.is_empty() {
-            vec![]
+        let gpu_type_ids = if let Some(gpu_type_id) = &self.gpu_type_id {
+            if gpu_type_id.is_empty() {
+                vec![]
+            } else {
+                vec![gpu_type_id.clone()]
+            }
         } else {
-            vec![self.gpu_type_id.clone()]
+            vec![]
         };
-        let ports: Vec<String> = self
-            .ports
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let ports: Vec<String> = if let Some(ports_str) = &self.ports {
+            ports_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            vec![]
+        };
         let env_map: HashMap<String, String> = self
             .env
             .iter()
@@ -1002,22 +1011,17 @@ impl CreateOnDemandPodRequest {
             .collect();
 
         PodCreateInput {
-            name: Some(self.name.clone()),
-            image_name: Some(self.image_name.clone()),
-            container_disk_in_gb: Some(self.container_disk_in_gb),
-            volume_in_gb: Some(self.volume_in_gb),
-            volume_mount_path: Some(self.volume_mount_path.clone()),
+            name: self.name.clone(),
+            image_name: self.image_name.clone(),
+            container_disk_in_gb: self.container_disk_in_gb,
+            volume_in_gb: self.volume_in_gb,
+            volume_mount_path: self.volume_mount_path.clone(),
             ports: Some(ports),
             env: Some(env_map),
-            docker_start_cmd: if self.docker_args.is_empty() {
-                None
+            docker_start_cmd: if let Some(args) = &self.docker_args {
+                Some(args.split_whitespace().map(|s| s.to_string()).collect())
             } else {
-                Some(
-                    self.docker_args
-                        .split_whitespace()
-                        .map(|s| s.to_string())
-                        .collect(),
-                )
+                None
             },
             docker_entrypoint: None,
             locked: None,
@@ -1026,9 +1030,9 @@ impl CreateOnDemandPodRequest {
             cloud_type: Some(cloud_type),
             data_center_ids: None,
             gpu_type_ids: Some(gpu_type_ids),
-            min_ram_per_gpu: Some(self.min_memory_in_gb),
-            min_vcpu_per_gpu: Some(self.min_vcpu_count),
-            network_volume_id: None,
+            min_ram_per_gpu: self.min_memory_in_gb,
+            min_vcpu_per_gpu: self.min_vcpu_count,
+            network_volume_id: self.network_volume_id.clone(),
             bid_per_gpu: if is_spot { Some(0.0) } else { None },
             country_codes: None,
             gpu_type_priority: None,
@@ -1044,9 +1048,9 @@ impl CreateOnDemandPodRequest {
 
 impl CreateSpotPodRequest {
     pub fn to_pod_create_input(&self, _is_spot: bool) -> PodCreateInput {
-        let cloud_type = match self.cloud_type.as_str() {
-            "SECURE" => "SECURE".to_string(),
-            "COMMUNITY" => "COMMUNITY".to_string(),
+        let cloud_type = match self.cloud_type.as_deref() {
+            Some("SECURE") => "SECURE".to_string(),
+            Some("COMMUNITY") => "COMMUNITY".to_string(),
             _ => "SECURE".to_string(),
         };
         let gpu_type_ids = if self.gpu_type_id.is_empty() {
@@ -1054,12 +1058,15 @@ impl CreateSpotPodRequest {
         } else {
             vec![self.gpu_type_id.clone()]
         };
-        let ports: Vec<String> = self
-            .ports
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let ports: Vec<String> = if let Some(ports_str) = &self.ports {
+            ports_str
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        } else {
+            vec![]
+        };
         let env_map: HashMap<String, String> = self
             .env
             .iter()
@@ -1071,18 +1078,13 @@ impl CreateSpotPodRequest {
             image_name: Some(self.image_name.clone()),
             container_disk_in_gb: Some(self.container_disk_in_gb),
             volume_in_gb: Some(self.volume_in_gb),
-            volume_mount_path: Some(self.volume_mount_path.clone()),
+            volume_mount_path: self.volume_mount_path.clone(),
             ports: Some(ports),
             env: Some(env_map),
-            docker_start_cmd: if self.docker_args.is_empty() {
-                None
+            docker_start_cmd: if let Some(args) = &self.docker_args {
+                Some(args.split_whitespace().map(|s| s.to_string()).collect())
             } else {
-                Some(
-                    self.docker_args
-                        .split_whitespace()
-                        .map(|s| s.to_string())
-                        .collect(),
-                )
+                None
             },
             docker_entrypoint: None,
             locked: None,
@@ -1091,8 +1093,8 @@ impl CreateSpotPodRequest {
             cloud_type: Some(cloud_type),
             data_center_ids: None,
             gpu_type_ids: Some(gpu_type_ids),
-            min_ram_per_gpu: Some(self.min_memory_in_gb),
-            min_vcpu_per_gpu: Some(self.min_vcpu_count),
+            min_ram_per_gpu: self.min_memory_in_gb,
+            min_vcpu_per_gpu: self.min_vcpu_count,
             network_volume_id: None,
             // Spot => set bidPerGpu
             bid_per_gpu: Some(self.bid_per_gpu),
