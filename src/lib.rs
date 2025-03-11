@@ -7,6 +7,7 @@ const RUNPOD_GRAPHQL_URL: &str = "https://api.runpod.io/graphql";
 const RUNPOD_REST_BASE_URL: &str = "https://rest.runpod.io/v1";
 
 /// Main client struct for interacting with RunPod.
+#[derive(Clone)]
 pub struct RunpodClient {
     http_client: Client,
     api_key: String,
