@@ -1019,12 +1019,12 @@ impl CreateOnDemandPodRequest {
             volume_mount_path: self.volume_mount_path.clone(),
             ports: Some(ports),
             env: Some(env_map),
-            docker_start_cmd: if let Some(args) = &self.docker_args {
+            docker_start_cmd: None,
+            docker_entrypoint: if let Some(args) = &self.docker_args {
                 Some(args.split_whitespace().map(|s| s.to_string()).collect())
             } else {
                 None
             },
-            docker_entrypoint: None,
             locked: None,
             container_registry_auth_id: None,
             allowed_cuda_versions: None,
