@@ -218,7 +218,7 @@ impl RunpodClient {
         Ok(PodStopResponseData {
             data: Some(PodInfoMinimalStop {
                 id: pod.id,
-                desired_status: pod.desired_status,
+                desired_status: Some(pod.desired_status),
             }),
             errors: None,
         })
@@ -240,6 +240,38 @@ impl RunpodClient {
                     id: p.id,
                     name: p.name.unwrap_or_default(),
                     runtime: None,
+                    desired_status: p.desired_status,
+                    last_status_change: p.last_status_change,
+                    machine_id: p.machine_id,
+                    gpu_count: p.gpu.as_ref().map(|g| g.count).unwrap_or_default(),
+                    memory_in_gb: p.memory_in_gb,
+                    vcpu_count: p.vcpu_count,
+                    storage: PodStorage {
+                        container_disk_in_gb: p.container_disk_in_gb,
+                        volume_in_gb: p.volume_in_gb,
+                        volume_mount_path: p.volume_mount_path.unwrap_or_default(),
+                        volume_encrypted: p.volume_encrypted,
+                    },
+                    cost_per_hr: p.cost_per_hr.parse().unwrap_or_default(),
+                    adjusted_cost_per_hr: p.adjusted_cost_per_hr,
+                    interruptible: p.interruptible,
+                    ports: p.ports.clone(),
+                    public_ip: p.public_ip.clone(),
+                    image: p.image.clone(),
+                    env: p.env.clone(),
+                    last_started_at: p.last_started_at.clone(),
+                    network_volume: p.network_volume.map(|nv| NetworkVolume {
+                        id: nv.id,
+                        name: nv.name,
+                        size: nv.size,
+                        data_center_id: nv.data_center_id,
+                    }),
+                    machine: p.machine.map(|m| PodMachineInfo {
+                        id: m.id,
+                        location: m.location,
+                        gpu_display_name: m.gpu_display_name,
+                        support_public_ip: m.support_public_ip,
+                    }),
                 })
                 .collect(),
         };
@@ -263,7 +295,44 @@ impl RunpodClient {
             data: Some(PodInfoFull {
                 id: pod.id,
                 name: pod.name.unwrap_or_default(),
-                runtime: None,
+                desired_status: pod.desired_status,
+                last_status_change: pod.last_status_change,
+                machine_id: pod.machine_id,
+                gpu_count: pod.gpu.as_ref().map(|g| g.count).unwrap_or_default(),
+                memory_in_gb: pod.memory_in_gb,
+                vcpu_count: pod.vcpu_count,
+                storage: PodStorage {
+                    container_disk_in_gb: pod.container_disk_in_gb,
+                    volume_in_gb: pod.volume_in_gb,
+                    volume_mount_path: pod.volume_mount_path.unwrap_or_default(),
+                    volume_encrypted: pod.volume_encrypted,
+                },
+                runtime: pod.runtime.map(|r| PodRuntime {
+                    uptime_in_seconds: r.uptime_in_seconds.unwrap_or_default(),
+                    // Add other runtime fields as needed
+                }),
+                cost_per_hr: pod.cost_per_hr.parse().unwrap_or_default(),
+                adjusted_cost_per_hr: pod.adjusted_cost_per_hr,
+                interruptible: pod.interruptible,
+                ports: pod.ports.clone(),
+                public_ip: pod.public_ip.clone(),
+                image: pod.image.clone(),
+                env: pod.env.clone(),
+                last_started_at: pod.last_started_at.clone(),
+                network_volume: pod.network_volume.map(|nv| NetworkVolume {
+                    id: nv.id,
+                    name: nv.name,
+                    size: nv.size,
+                    data_center_id: nv.data_center_id,
+                }),
+                machine: pod.machine.map(|m| PodMachineInfo {
+                    id: m.id,
+                    location: m.location,
+                    gpu_display_name: m.gpu_display_name,
+                    support_public_ip: m.support_public_ip,
+                    // Add other machine fields as needed
+                }),
+                // Add other fields as needed
             }),
             errors: None,
         })
@@ -590,21 +659,41 @@ pub struct PodCreateInput {
     pub network_volume_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Pod {
     pub id: String,
     pub name: Option<String>,
-    pub image: Option<String>,
-    pub desired_status: Option<String>,
-    // Add other fields if you like
+    pub desired_status: String,
+    pub last_status_change: String,
+    pub machine_id: String,
+    pub memory_in_gb: f64,
+    pub vcpu_count: f64,
+    pub container_disk_in_gb: i32,
+    pub volume_in_gb: f64,
+    pub volume_mount_path: Option<String>,
+    pub volume_encrypted: bool,
+    pub cost_per_hr: String,
+    pub adjusted_cost_per_hr: f64,
+    pub interruptible: bool,
+    pub ports: Vec<String>,
+    pub public_ip: Option<String>,
+    pub image: String,
+    pub env: HashMap<String, String>,
+    pub last_started_at: Option<String>,
+    pub gpu: Option<GpuInfo>,
+    pub machine: Option<MachineInfo>,
+    pub runtime: Option<RuntimeInfo>,
+    pub network_volume: Option<NetworkVolumeInfo>,
+    pub savings_plans: Option<Vec<SavingsPlan>>,
+    // Add other fields as needed
 }
 
 impl Pod {
     pub fn into_minimal(self) -> PodInfoMinimal {
         PodInfoMinimal {
             id: self.id,
-            image_name: self.image.unwrap_or_default(),
+            image_name: self.image,
             env: vec![],
             machine_id: String::new(),
             machine: MachineHost { pod_host_id: None },
@@ -612,42 +701,158 @@ impl Pod {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuInfo {
+    pub id: String,
+    pub count: i32,
+    pub display_name: String,
+    // Add other GPU fields as needed
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineInfo {
+    pub id: String,
+    pub location: String,
+    pub gpu_display_name: String,
+    pub support_public_ip: bool,
+    pub secure_cloud: bool,
+    // Add other machine fields as needed
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeInfo {
+    pub uptime_in_seconds: Option<i32>,
+    // Add other runtime fields as needed
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkVolumeInfo {
+    pub id: String,
+    pub name: String,
+    pub size: i32,
+    pub data_center_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SavingsPlan {
+    pub id: String,
+    pub pod_id: String,
+    pub gpu_type_id: String,
+    pub cost_per_hr: f64,
+    pub start_time: String,
+    pub end_time: String,
+}
+
+// Update the PodInfoFull struct to include all the fields
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PodInfoFull {
+    pub id: String,
+    pub name: String,
+    pub desired_status: String,
+    pub last_status_change: String,
+    pub machine_id: String,
+    pub gpu_count: i32,
+    pub memory_in_gb: f64,
+    pub vcpu_count: f64,
+    pub storage: PodStorage,
+    pub runtime: Option<PodRuntime>,
+    pub cost_per_hr: f64,
+    pub adjusted_cost_per_hr: f64,
+    pub interruptible: bool,
+    pub ports: Vec<String>,
+    pub public_ip: Option<String>,
+    pub image: String,
+    pub env: HashMap<String, String>,
+    pub last_started_at: Option<String>,
+    pub network_volume: Option<NetworkVolume>,
+    pub machine: Option<PodMachineInfo>,
+    // Add other fields as needed
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PodStorage {
+    pub container_disk_in_gb: i32,
+    pub volume_in_gb: f64,
+    pub volume_mount_path: String,
+    pub volume_encrypted: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PodRuntime {
+    pub uptime_in_seconds: i32,
+    // Add other runtime fields as needed
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkVolume {
+    pub id: String,
+    pub name: String,
+    pub size: i32,
+    pub data_center_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PodMachineInfo {
+    pub id: String,
+    pub location: String,
+    pub gpu_display_name: String,
+    pub support_public_ip: bool,
+    // Add other machine fields as needed
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodCreateResponseData {
     pub data: Option<Pod>,
     pub errors: Option<Vec<GraphQLError>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodStartResponseData {
     pub data: Option<PodInfoMinimal>,
     pub errors: Option<Vec<GraphQLError>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodStopResponseData {
     pub data: Option<PodInfoMinimalStop>,
     pub errors: Option<Vec<GraphQLError>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodsListResponseData {
     pub data: Option<MyselfPods>,
     pub errors: Option<Vec<GraphQLError>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodInfoResponseData {
     pub data: Option<PodInfoFull>,
     pub errors: Option<Vec<GraphQLError>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MyselfPods {
     pub pods: Vec<PodInfoFull>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodInfoMinimal {
     pub id: String,
     #[serde(rename = "imageName")]
@@ -659,6 +864,7 @@ pub struct PodInfoMinimal {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct PodInfoMinimalStop {
     pub id: String,
     #[serde(rename = "desiredStatus")]
@@ -666,26 +872,14 @@ pub struct PodInfoMinimalStop {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub struct PodInfoFull {
-    pub id: String,
-    pub name: String,
-    pub runtime: Option<PodRuntime>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct PodRuntime {
-    #[serde(rename = "uptimeInSeconds")]
-    pub uptime_in_seconds: Option<i64>,
-    // etc
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MachineHost {
     #[serde(rename = "podHostId")]
     pub pod_host_id: Option<String>,
@@ -694,14 +888,6 @@ pub struct MachineHost {
 // -----------------------------------------------------------------------------
 // 2) Network Volumes
 // -----------------------------------------------------------------------------
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkVolume {
-    pub id: String,
-    pub name: String,
-    pub size: i32,
-    pub data_center_id: String,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
