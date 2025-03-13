@@ -276,6 +276,7 @@ impl RunpodClient {
         &self,
         req: CreateOnDemandPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
+        // Build the initial JSON
         let mut payload = serde_json::json!({
             "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
             "computeType": "GPU",
@@ -291,12 +292,19 @@ impl RunpodClient {
             "ports": req.ports
                 .map(|p| vec![format!("{}/http", p)])
                 .unwrap_or_else(|| vec!["8888/http".to_string(), "22/tcp".to_string()]),
-            "volumeMountPath": req.volume_mount_path,
             "env": req.env
                 .into_iter()
                 .map(|e| (e.key, e.value))
                 .collect::<std::collections::HashMap<_, _>>(),
         });
+
+        // If user provided a volumeMountPath, insert it; otherwise don't.
+        if let Some(volume_mount_path) = req.volume_mount_path {
+            payload.as_object_mut().unwrap().insert(
+                "volumeMountPath".to_string(),
+                serde_json::Value::String(volume_mount_path),
+            );
+        }
 
         if let Some(network_volume_id) = req.network_volume_id {
             payload.as_object_mut().unwrap().insert(
@@ -305,6 +313,7 @@ impl RunpodClient {
             );
         }
 
+        // Then do the request + status check, same as before...
         let response = self
             .http_client
             .post("https://rest.runpod.io/v1/pods")
@@ -313,17 +322,13 @@ impl RunpodClient {
             .send()
             .await?;
 
-        // Check status *without* consuming the response:
+        // ...and the rest is unchanged...
         if let Err(status_err) = response.error_for_status_ref() {
-            // Capture the text/body *before* returning
             let err_text = response.text().await.unwrap_or_else(|_| "".to_string());
             eprintln!("RunPod create_on_demand_pod error body: {}", err_text);
-
-            // Now return the original err (or wrap it with more info)
             return Err(status_err);
         }
 
-        // If we get here, the response was 2xx success; parse the Pod from JSON
         let pod = response.json::<Pod>().await?;
         Ok(PodCreateResponseData {
             data: Some(pod),
@@ -1685,7 +1690,8 @@ mod tests {
             docker_args: None,
             docker_entrypoint: Some("sleep infinity".to_string()),
             ports: Some("8888".to_string()),
-            volume_mount_path: Some("/workspace".to_string()),
+            volume_mount_path: None,
+            // volume_mount_path: Some("/workspace".to_string()),
             env: env_vec,
             network_volume_id: None,
         };
