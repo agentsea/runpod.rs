@@ -1,7 +1,8 @@
-use reqwest::{Client, Method};
+use reqwest::{Client, Method, Request};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::error::Error;
 use tracing::info;
 const RUNPOD_GRAPHQL_URL: &str = "https://api.runpod.io/graphql";
 const RUNPOD_REST_BASE_URL: &str = "https://rest.runpod.io/v1";
@@ -116,41 +117,145 @@ impl RunpodClient {
         })
     }
 
-    pub async fn list_available_gpus_with_datacenters(
+    /// Delete a Pod by ID.
+    pub async fn delete_pod(&self, pod_id: &str) -> Result<(), reqwest::Error> {
+        let path = format!("pods/{}", pod_id);
+        self.rest_request(Method::DELETE, &path)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    /// List all datacenters with GPU availability.
+    /// If you only need to filter on a single GPU type ID, you can pass it in as a string.
+    /// Otherwise, see the "GpuAvailabilityInput" example above.
+    /// List all datacenters with all GPU availability.
+    pub async fn list_datacenters_with_gpu_availability(
         &self,
-    ) -> Result<DatacentersWithGpuTypes, reqwest::Error> {
+    ) -> Result<DatacentersResponseData, reqwest::Error> {
         let query = r#"
-            query myself {
-                myself {
-                    datacenters {
-                        id
-                        name
-                        location
-                        available
-                        gpuTypes {
-                            id
-                            displayName
-                            memoryInGb
-                            available
-                            secureCloud
-                            communityCloud
-                            securePrice
-                            communityPrice
-                            communitySpotPrice
-                            secureSpotPrice
-                        }
-                    }
+        query MyDataCenters {
+            myself {
+                datacenters {
+                    id
+                    name
                 }
             }
-        "#;
+        }
+    "#;
 
-        let resp: GraphQLResponse<MyselfResponse> = self.graphql_query(query).await?;
+        let resp: GraphQLResponse<DatacentersWithGpuAvailResponse> =
+            self.graphql_query(query).await?;
 
-        Ok(DatacentersWithGpuTypes {
+        Ok(DatacentersResponseData {
             data: resp.data.map(|d| d.myself.datacenters),
             errors: resp.errors,
         })
     }
+
+    // pub async fn list_available_gpus_with_datacenters(
+    //     &self,
+    // ) -> Result<GraphQLResponse<Vec<GpuTypeWithDatacenters>>, Box<dyn std::error::Error>> {
+    //     // Query GPU types (these fields *are* valid per docs)
+    //     let gpu_types_query = r#"
+    //     query {
+    //       gpuTypes {
+    //         id
+    //         displayName
+    //         memoryInGb
+    //         secureCloud
+    //         communityCloud
+    //         securePrice
+    //         communityPrice
+    //         communitySpotPrice
+    //         secureSpotPrice
+    //       }
+    //     }
+    // "#;
+
+    //     let gpu_types_response = self
+    //         .graphql_query::<GraphQLResponse<GpuTypesResponse>>(gpu_types_query)
+    //         .await?;
+
+    //     // Then query for datacenters (only fields that are in the docs)
+    //     let datacenters_query = r#"
+    //     query {
+    //       myself {
+    //         datacenters {
+    //           id
+    //           name
+    //           location
+    //           countryCode
+    //           # country is also valid if needed,
+    //           # but remove all references to gpuAvailability, etc.
+    //         }
+    //       }
+    //     }
+    // "#;
+
+    //     let datacenters_response = self
+    //         .graphql_query::<GraphQLResponse<DatacentersResponse>>(datacenters_query)
+    //         .await?;
+
+    //     // Extract the data from responses
+    //     let gpu_types = match gpu_types_response.data {
+    //         Some(data) => data.gpu_types,
+    //         None => {
+    //             return Err("No GPU types data returned from API".into());
+    //         }
+    //     };
+
+    //     let datacenters = match datacenters_response.data {
+    //         Some(data) => data.myself.datacenters,
+    //         None => {
+    //             return Err("No datacenter data returned from API".into());
+    //         }
+    //     };
+
+    //     // Combine the data
+    //     let mut result = Vec::new();
+
+    //     for gpu_type in gpu_types {
+    //         let available_datacenters = datacenters
+    //             .iter()
+    //             .filter(|dc| {
+    //                 // Use dc.available directly since it's already a boolean
+    //                 let has_availability = dc.gpu_availability.iter().any(|ga| ga.available);
+
+    //                 // Then check if any GPU matches the type we're looking for
+    //                 let has_matching_gpu = dc.gpu_types.iter().any(|gpu| gpu.id == gpu_type.id);
+
+    //                 // Both conditions must be true
+    //                 has_availability && has_matching_gpu
+    //             })
+    //             .map(|dc| DatacenterInfo {
+    //                 id: dc.id.clone(),
+    //                 name: dc.name.clone(),
+    //                 available: dc.available,
+    //                 country_name: "".to_string(),
+    //             })
+    //             .collect();
+
+    //         result.push(GpuTypeWithDatacenters {
+    //             id: gpu_type.id.clone(),
+    //             display_name: gpu_type.display_name.clone(),
+    //             memory_in_gb: gpu_type.memory_in_gb,
+    //             secure_cloud: gpu_type.secure_cloud,
+    //             community_cloud: gpu_type.community_cloud,
+    //             datacenters: available_datacenters,
+    //             secure_price: gpu_type.secure_price,
+    //             community_price: gpu_type.community_price,
+    //             community_spot_price: gpu_type.community_spot_price,
+    //             secure_spot_price: gpu_type.secure_spot_price,
+    //         });
+    //     }
+
+    //     Ok(GraphQLResponse {
+    //         data: Some(result),
+    //         errors: None,
+    //     })
+    // }
 
     // -------------------------------------------------------------------------
     //  B) REST CALLS (for Pods, Network Volumes, etc.)
@@ -171,15 +276,49 @@ impl RunpodClient {
         req: CreateOnDemandPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
         // Convert your custom request -> PodCreateInput
-        let payload = req.to_pod_create_input(false);
-        let resp = self
-            .rest_request(Method::POST, "pods")
+        let mut payload = serde_json::json!({
+            "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
+            "computeType": "GPU",
+            "gpuCount": req.gpu_count.unwrap_or(1),
+            "volumeInGb": req.volume_in_gb.unwrap_or(20),
+            "containerDiskInGb": req.container_disk_in_gb.unwrap_or(50),
+            "minVCPUPerGPU": req.min_vcpu_count.unwrap_or(2),
+            "minRAMPerGPU": req.min_memory_in_gb.unwrap_or(8),
+            "gpuTypeIds": [req.gpu_type_id.unwrap_or_default()],
+            "name": req.name.unwrap_or_default(),
+            "imageName": req.image_name.unwrap_or_default(),
+            "dockerStartCmd": req.docker_args.map(|args| vec![args]).unwrap_or_default(),
+            "ports": req.ports
+                .map(|p| vec![format!("{}/http", p)])
+                .unwrap_or_else(|| vec!["8888/http".to_string(), "22/tcp".to_string()]),
+            "volumeMountPath": req.volume_mount_path,
+            "env": req.env
+                .into_iter()
+                .map(|e| (e.key, e.value))
+                .collect::<std::collections::HashMap<_, _>>(),
+        });
+
+        // If networkVolumeId is Some(...), insert it; if None, we skip it entirely.
+        if let Some(network_volume_id) = req.network_volume_id {
+            payload.as_object_mut().unwrap().insert(
+                "networkVolumeId".to_string(),
+                serde_json::Value::String(network_volume_id),
+            );
+        }
+
+        // Send the request and parse the response
+        let pod = self
+            .http_client
+            .post("https://rest.runpod.io/v1/pods")
+            .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&payload)
             .send()
             .await?
-            .error_for_status()?;
+            .error_for_status()? // bubble up any HTTP error responses as `reqwest::Error`
+            .json::<Pod>()
+            .await?;
 
-        let pod = resp.json::<Pod>().await?;
+        // Return the parsed Pod inside our response struct
         Ok(PodCreateResponseData {
             data: Some(pod),
             errors: None,
@@ -269,12 +408,12 @@ impl RunpodClient {
                         volume_mount_path: p.volume_mount_path.unwrap_or_default(),
                         volume_encrypted: p.volume_encrypted,
                     },
-                    cost_per_hr: p.cost_per_hr.parse().unwrap_or_default(),
+                    cost_per_hr: p.cost_per_hr,
                     adjusted_cost_per_hr: p.adjusted_cost_per_hr,
                     interruptible: p.interruptible,
                     ports: p.ports.clone(),
                     public_ip: p.public_ip.clone(),
-                    image: p.image.clone(),
+                    image: p.image.unwrap_or_default(),
                     env: p.env.clone(),
                     last_started_at: p.last_started_at.clone(),
                     network_volume: p.network_volume.map(|nv| NetworkVolume {
@@ -284,10 +423,10 @@ impl RunpodClient {
                         data_center_id: nv.data_center_id,
                     }),
                     machine: p.machine.map(|m| PodMachineInfo {
-                        id: m.id,
-                        location: m.location,
-                        gpu_display_name: m.gpu_display_name,
-                        support_public_ip: m.support_public_ip,
+                        id: m.id.unwrap_or_default(),
+                        location: m.location.unwrap_or_default(),
+                        support_public_ip: m.support_public_ip.unwrap_or_default(),
+                        secure_cloud: m.secure_cloud.unwrap_or_default(),
                     }),
                 })
                 .collect(),
@@ -328,12 +467,12 @@ impl RunpodClient {
                     uptime_in_seconds: r.uptime_in_seconds.unwrap_or_default(),
                     // Add other runtime fields as needed
                 }),
-                cost_per_hr: pod.cost_per_hr.parse().unwrap_or_default(),
+                cost_per_hr: pod.cost_per_hr,
                 adjusted_cost_per_hr: pod.adjusted_cost_per_hr,
                 interruptible: pod.interruptible,
                 ports: pod.ports.clone(),
                 public_ip: pod.public_ip.clone(),
-                image: pod.image.clone(),
+                image: pod.image.unwrap_or_default(),
                 env: pod.env.clone(),
                 last_started_at: pod.last_started_at.clone(),
                 network_volume: pod.network_volume.map(|nv| NetworkVolume {
@@ -343,10 +482,10 @@ impl RunpodClient {
                     data_center_id: nv.data_center_id,
                 }),
                 machine: pod.machine.map(|m| PodMachineInfo {
-                    id: m.id,
-                    location: m.location,
-                    gpu_display_name: m.gpu_display_name,
-                    support_public_ip: m.support_public_ip,
+                    id: m.id.unwrap_or_default(),
+                    location: m.location.unwrap_or_default(),
+                    support_public_ip: m.support_public_ip.unwrap_or_default(),
+                    secure_cloud: m.secure_cloud.unwrap_or_default(),
                     // Add other machine fields as needed
                 }),
                 // Add other fields as needed
@@ -520,6 +659,13 @@ impl RunpodClient {
 // -----------------------------------------------------------------------------
 // GraphQL Data Structures
 // -----------------------------------------------------------------------------
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GraphQLError {
+    pub message: String,
+    pub locations: Option<Vec<serde_json::Value>>,
+    pub path: Option<Vec<String>>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct GraphQLResponse<T> {
     pub data: Option<T>,
@@ -527,14 +673,15 @@ pub struct GraphQLResponse<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
-pub struct GraphQLError {
-    pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct GPUTypesListResponse {
     #[serde(rename = "gpuTypes")]
     pub gpu_types: Vec<GpuTypeMinimal>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GpuTypesResponse {
+    #[serde(rename = "gpuTypes")]
+    gpu_types: Vec<GpuType>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -553,6 +700,20 @@ pub struct GPUTypeResponseData {
 pub struct GPUTypesExtendedResponse {
     #[serde(rename = "gpuTypes")]
     pub gpu_types: Vec<GpuTypeExtended>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuType {
+    pub id: String,
+    pub display_name: String,
+    pub memory_in_gb: f64,
+    pub secure_cloud: bool,
+    pub community_cloud: bool,
+    pub secure_price: Option<f64>,
+    pub community_price: Option<f64>,
+    pub community_spot_price: Option<f64>,
+    pub secure_spot_price: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -596,7 +757,7 @@ pub struct MyselfData {
     pub datacenters: Vec<DatacenterWithGpuTypes>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct DatacenterWithGpuTypes {
     pub id: String,
     pub name: String,
@@ -606,7 +767,7 @@ pub struct DatacenterWithGpuTypes {
     pub gpu_types: Vec<DatacenterGpuType>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct DatacenterGpuType {
     pub id: String,
     #[serde(rename = "displayName")]
@@ -634,9 +795,104 @@ pub struct DatacentersWithGpuTypes {
     pub errors: Option<Vec<GraphQLError>>,
 }
 
+#[derive(serde::Deserialize)]
+struct DatacentersResponse {
+    myself: MyselfDatacenters,
+}
+
+#[derive(serde::Deserialize)]
+struct MyselfDatacenters {
+    datacenters: Vec<DatacenterQ>,
+}
+
+#[derive(serde::Deserialize)]
+struct DatacenterQ {
+    id: String,
+    name: String,
+    location: String,
+    #[serde(rename = "countryCode")]
+    country_code: String,
+}
+
+/// The top-level data structure for this particular `myself.datacenters` response.
+#[derive(Debug, serde::Deserialize)]
+pub struct DatacentersWithGpuAvailResponse {
+    pub myself: MyselfDataCenters,
+}
+
+/// Just holds the array of datacenters.
+#[derive(Debug, serde::Deserialize)]
+pub struct MyselfDataCenters {
+    pub datacenters: Vec<DataCenter>,
+}
+
+/// Represents a single DataCenter, including its GPU availability.
+#[derive(Debug, serde::Deserialize)]
+pub struct DataCenter {
+    pub id: String,
+    pub name: String,
+    pub location: String,
+    pub countryCode: String,
+    pub gpuAvailability: Vec<GpuAvailability>,
+}
+
+/// Holds GPU availability for a particular GPU type.
+#[derive(Debug, serde::Deserialize)]
+pub struct GpuAvailability {
+    pub gpuTypeId: String,
+    pub count: i32,
+}
+
+/// A convenience struct for returning data from the function,
+/// similar to your existing style of "ResponseData".
+#[derive(Debug)]
+pub struct DatacentersResponseData {
+    pub data: Option<Vec<DataCenter>>,
+    pub errors: Option<Vec<GraphQLError>>,
+}
+
 // -----------------------------------------------------------------------------
 // REST Data Structures
 // -----------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct GpuTypeWithDatacenters {
+    pub id: String,
+    pub display_name: String,
+    pub memory_in_gb: f64,
+    pub secure_cloud: bool,
+    pub community_cloud: bool,
+    pub secure_price: Option<f64>,
+    pub community_price: Option<f64>,
+    pub community_spot_price: Option<f64>,
+    pub secure_spot_price: Option<f64>,
+    pub datacenters: Vec<DatacenterInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DatacenterInfo {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+    pub country_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Datacenter {
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+    pub location: Location,
+    #[serde(rename = "gpuTypes")]
+    pub gpu_types: Vec<GpuType>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Location {
+    #[serde(rename = "countryName")]
+    pub country_name: String,
+}
 
 //
 // 1) Pods
@@ -681,27 +937,49 @@ pub struct PodCreateInput {
 pub struct Pod {
     pub id: String,
     pub name: Option<String>,
+    #[serde(default)]
     pub desired_status: String,
+    #[serde(default)]
     pub last_status_change: String,
+    #[serde(default)]
     pub machine_id: String,
+    #[serde(default)]
     pub memory_in_gb: f64,
+    #[serde(default)]
     pub vcpu_count: f64,
+    #[serde(default)]
     pub container_disk_in_gb: i32,
+    #[serde(default)]
     pub volume_in_gb: f64,
+    #[serde(default)]
     pub volume_mount_path: Option<String>,
+    #[serde(default)]
     pub volume_encrypted: bool,
-    pub cost_per_hr: String,
+    #[serde(default)]
+    pub cost_per_hr: f64,
+    #[serde(default)]
     pub adjusted_cost_per_hr: f64,
+    #[serde(default)]
     pub interruptible: bool,
+    #[serde(default)]
     pub ports: Vec<String>,
+    #[serde(default)]
     pub public_ip: Option<String>,
-    pub image: String,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
     pub last_started_at: Option<String>,
+    #[serde(default)]
     pub gpu: Option<GpuInfo>,
+    #[serde(default)]
     pub machine: Option<MachineInfo>,
+    #[serde(default)]
     pub runtime: Option<RuntimeInfo>,
+    #[serde(default)]
     pub network_volume: Option<NetworkVolumeInfo>,
+    #[serde(default)]
     pub savings_plans: Option<Vec<SavingsPlan>>,
     // Add other fields as needed
 }
@@ -710,7 +988,7 @@ impl Pod {
     pub fn into_minimal(self) -> PodInfoMinimal {
         PodInfoMinimal {
             id: self.id,
-            image_name: self.image,
+            image_name: self.image.unwrap_or_default(),
             env: vec![],
             machine_id: String::new(),
             machine: MachineHost { pod_host_id: None },
@@ -727,15 +1005,18 @@ pub struct GpuInfo {
     // Add other GPU fields as needed
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(default)]
 pub struct MachineInfo {
-    pub id: String,
-    pub location: String,
-    pub gpu_display_name: String,
-    pub support_public_ip: bool,
-    pub secure_cloud: bool,
-    // Add other machine fields as needed
+    // No references to gpuDisplayName
+    #[serde(rename = "gpuTypeId")]
+    pub gpu_type_id: Option<String>,
+
+    pub id: Option<String>,
+    pub location: Option<String>,
+    pub support_public_ip: Option<bool>,
+    pub secure_cloud: Option<bool>,
+    // etc.
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -817,14 +1098,22 @@ pub struct NetworkVolume {
     pub data_center_id: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct PodMachineInfo {
+    // Mark everything optional or provide defaults so Serde won’t error out:
+    #[serde(default)]
     pub id: String,
+
+    #[serde(default)]
     pub location: String,
-    pub gpu_display_name: String,
+
+    #[serde(default)]
     pub support_public_ip: bool,
-    // Add other machine fields as needed
+
+    #[serde(default)]
+    pub secure_cloud: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -1147,6 +1436,7 @@ pub struct Template {
 //    into the REST "PodCreateInput"
 // -----------------------------------------------------------------------------
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateOnDemandPodRequest {
     pub cloud_type: Option<String>,
     pub gpu_count: Option<i32>, // not directly used by REST
@@ -1158,6 +1448,7 @@ pub struct CreateOnDemandPodRequest {
     pub name: Option<String>,
     pub image_name: Option<String>,
     pub docker_args: Option<String>,
+    pub docker_entrypoint: Option<String>,
     pub ports: Option<String>,
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
@@ -1165,6 +1456,7 @@ pub struct CreateOnDemandPodRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSpotPodRequest {
     pub bid_per_gpu: f64,
     pub cloud_type: Option<String>,
@@ -1314,8 +1606,6 @@ impl CreateSpotPodRequest {
     }
 }
 
-// ... existing code ...
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1356,4 +1646,206 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    #[ignore] // This test is ignored by default since it requires an API key
+    async fn integration_test_create_on_demand_pod() {
+        // Get API key from environment variable
+        let api_key =
+            env::var("RUNPOD_API_KEY").expect("RUNPOD_API_KEY environment variable must be set");
+
+        // Create a real client
+        let client = RunpodClient::new(api_key);
+
+        // Create environment variables for the pod
+        let env_vec = vec![EnvVar {
+            key: "TEST_VAR".to_string(),
+            value: "test_value".to_string(),
+        }];
+
+        // Create the request
+        let request = CreateOnDemandPodRequest {
+            cloud_type: Some("SECURE".to_string()),
+            gpu_count: Some(1),
+            volume_in_gb: Some(20),
+            container_disk_in_gb: Some(50),
+            min_vcpu_count: Some(4),
+            min_memory_in_gb: Some(16),
+            gpu_type_id: Some("NVIDIA GeForce RTX 4090".to_string()),
+            name: Some("test_pod_from_rust".to_string()),
+            image_name: Some(
+                "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04".to_string(),
+            ),
+            docker_args: None,
+            docker_entrypoint: Some("sleep infinity".to_string()),
+            ports: Some("8888".to_string()),
+            volume_mount_path: Some("/workspace".to_string()),
+            env: env_vec,
+            network_volume_id: None,
+        };
+
+        // Make the actual API call
+        let result = client.create_on_demand_pod(request).await;
+
+        // Print any error details for debugging
+        if let Err(ref e) = result {
+            println!("Error creating pod: {:?}", e);
+        }
+
+        // Verify the result
+        let pod_data = result.expect("Failed to create pod");
+
+        // Print the pod ID for reference
+        if let Some(data) = pod_data.data {
+            println!("Successfully created pod with ID: {}", data.id);
+            // Sleep for a few seconds to allow the pod to initialize
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // Get the pod details to verify it was created correctly
+            match client.get_pod(&data.id).await {
+                Ok(pod_info) => {
+                    println!("Pod details: {:?}", pod_info);
+                }
+                Err(e) => {
+                    println!("Error getting pod details: {:?}", e);
+                }
+            }
+            // Now delete the pod
+            client
+                .delete_pod(&data.id)
+                .await
+                .expect("Failed to delete the pod");
+            println!("Deleted pod with ID: {}", data.id);
+        } else {
+            panic!("No pod data returned");
+        }
+    }
+
+    // #[tokio::test]
+    // #[ignore] // This test is ignored by default since it requires an API key
+    // async fn integration_test_list_datacenters_with_gpu_availability() {
+    //     let api_key =
+    //         env::var("RUNPOD_API_KEY").expect("RUNPOD_API_KEY environment variable must be set");
+
+    //     let client = RunpodClient::new(api_key);
+
+    //     // Notice we are not passing an ID or input.
+    //     let result = client
+    //         .list_datacenters_with_gpu_availability()
+    //         .await
+    //         .expect("API call failed");
+
+    //     println!("Datacenters with GPU Availability: {:#?}", result);
+
+    //     // Basic validation
+    //     assert!(result.errors.is_none());
+    //     if let Some(datacenters) = result.data {
+    //         assert!(!datacenters.is_empty(), "Expected at least one datacenter");
+
+    //         for dc in &datacenters {
+    //             println!(
+    //                 "- {} ({}), located in {} / {}",
+    //                 dc.name, dc.id, dc.location, dc.countryCode
+    //             );
+    //             for availability in &dc.gpuAvailability {
+    //                 println!(
+    //                     "  ● GPU Type {} has {} available",
+    //                     availability.gpuTypeId, availability.count
+    //                 );
+    //             }
+    //         }
+    //     }
+    // }
+    // #[tokio::test]
+    // #[ignore] // This test is ignored by default since it requires an API key
+    // async fn integration_test_list_available_gpus_with_datacenters() {
+    //     // Get API key from environment variable
+    //     let api_key =
+    //         env::var("RUNPOD_API_KEY").expect("RUNPOD_API_KEY environment variable must be set");
+
+    //     // Create a real client
+    //     let client = RunpodClient::new(api_key);
+
+    //     // Make the actual API call
+    //     let result = client.list_available_gpus_with_datacenters().await;
+
+    //     // Check if there was an error and print more details
+    //     if let Err(err) = &result {
+    //         println!("Error details: {:?}", err);
+    //         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
+    //             if let Some(status) = reqwest_err.status() {
+    //                 println!("HTTP Status: {}", status);
+    //             }
+    //         }
+    //         // The correct way to get the response text from a reqwest::Error
+    //         if let Some(source) = err.source() {
+    //             println!("Error source: {}", source);
+    //         }
+    //     }
+
+    //     // Now unwrap the result
+    //     let result = result.expect("API call failed");
+
+    //     // Print the result for inspection
+    //     println!("GPU Types with Datacenters: {:#?}", result);
+
+    //     // Basic validation that we got some data
+    //     assert!(
+    //         result.errors.is_none(),
+    //         "GraphQL errors: {:?}",
+    //         result.errors
+    //     );
+    //     if let Some(gpu_types) = result.data {
+    //         assert!(!gpu_types.is_empty(), "Expected at least one GPU type");
+
+    //         // Print each GPU type and its datacenters
+    //         for gpu_type in &gpu_types {
+    //             println!(
+    //                 "GPU: {} ({}) - Memory: {}GB - Secure: {} - Community: {}",
+    //                 gpu_type.display_name,
+    //                 gpu_type.id,
+    //                 gpu_type.memory_in_gb,
+    //                 gpu_type.secure_cloud,
+    //                 gpu_type.community_cloud
+    //             );
+
+    //             // Print pricing information if available
+    //             if gpu_type.secure_price.is_some()
+    //                 || gpu_type.community_price.is_some()
+    //                 || gpu_type.secure_spot_price.is_some()
+    //                 || gpu_type.community_spot_price.is_some()
+    //             {
+    //                 println!("  Pricing:");
+    //                 if let Some(price) = gpu_type.secure_price {
+    //                     println!("    Secure: ${:.2}", price);
+    //                 }
+    //                 if let Some(price) = gpu_type.community_price {
+    //                     println!("    Community: ${:.2}", price);
+    //                 }
+    //                 if let Some(price) = gpu_type.secure_spot_price {
+    //                     println!("    Secure Spot: ${:.2}", price);
+    //                 }
+    //                 if let Some(price) = gpu_type.community_spot_price {
+    //                     println!("    Community Spot: ${:.2}", price);
+    //                 }
+    //             }
+
+    //             if !gpu_type.datacenters.is_empty() {
+    //                 println!("  Available in datacenters:");
+    //                 for datacenter in &gpu_type.datacenters {
+    //                     println!(
+    //                         "    - {} ({}) - Location: {} - Available: {}",
+    //                         datacenter.name,
+    //                         datacenter.id,
+    //                         datacenter.country_name,
+    //                         datacenter.available
+    //                     );
+    //                 }
+    //             } else {
+    //                 println!("  Not available in any datacenters");
+    //             }
+    //             println!();
+    //         }
+    //     }
+    // }
 }
