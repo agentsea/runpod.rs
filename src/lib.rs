@@ -29,11 +29,11 @@ impl RunpodClient {
         &self,
         graphql_body: &Value,
     ) -> Result<T, reqwest::Error> {
-        // GraphQL: can use `?api_key=` or an HTTP header; this example uses ?api_key=
-        let url = format!("{}?api_key={}", RUNPOD_GRAPHQL_URL, self.api_key);
+        // Use bearer token authentication instead of query parameter
         let resp = self
             .http_client
-            .post(&url)
+            .post(RUNPOD_GRAPHQL_URL)
+            .bearer_auth(&self.api_key) // Use bearer auth instead of query param
             .json(graphql_body)
             .send()
             .await?
