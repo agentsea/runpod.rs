@@ -27,17 +27,22 @@ impl RunpodClient {
     // -------------------------------------------------------------------------
     async fn graphql_query<T: for<'de> Deserialize<'de>>(
         &self,
-        graphql_body: &Value,
+        query: &str,
     ) -> Result<T, reqwest::Error> {
         // Log the request we're about to make (without the API key)
         info!("[RunPod] Making GraphQL request to {}", RUNPOD_GRAPHQL_URL);
 
-        // Create the request but don't send it yet
+        // Format the request body like the Python implementation
+        let body = json!({ "query": query });
+
+        // Create the request with proper headers
         let request = self
             .http_client
             .post(RUNPOD_GRAPHQL_URL)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "Rust-RunPod-Client/1.0")
             .bearer_auth(&self.api_key)
-            .json(graphql_body);
+            .json(&body);
 
         // Send the request and get the response
         let response = request.send().await?;
@@ -52,6 +57,7 @@ impl RunpodClient {
         let parsed = response.json::<T>().await?;
         Ok(parsed)
     }
+
     /// List GPU Types (only available in GraphQL).
     pub async fn list_gpu_types_graphql(&self) -> Result<GPUTypesListResponseData, reqwest::Error> {
         let query = r#"
@@ -63,9 +69,8 @@ impl RunpodClient {
                 }
             }
         "#;
-        let body = json!({ "query": query });
 
-        let resp: GraphQLResponse<GPUTypesListResponse> = self.graphql_query(&body).await?;
+        let resp: GraphQLResponse<GPUTypesListResponse> = self.graphql_query(query).await?;
         Ok(GPUTypesListResponseData {
             data: resp.data.map(|d| d.gpu_types),
             errors: resp.errors,
@@ -97,9 +102,8 @@ impl RunpodClient {
             "#,
             gpu_type_id = gpu_type_id
         );
-        let body = json!({ "query": query });
 
-        let resp: GraphQLResponse<GPUTypesExtendedResponse> = self.graphql_query(&body).await?;
+        let resp: GraphQLResponse<GPUTypesExtendedResponse> = self.graphql_query(&query).await?;
         Ok(GPUTypeResponseData {
             data: resp.data.map(|d| d.gpu_types),
             errors: resp.errors,
@@ -134,9 +138,7 @@ impl RunpodClient {
             }
         "#;
 
-        let body = json!({ "query": query });
-
-        let resp: GraphQLResponse<MyselfResponse> = self.graphql_query(&body).await?;
+        let resp: GraphQLResponse<MyselfResponse> = self.graphql_query(query).await?;
 
         Ok(DatacentersWithGpuTypes {
             data: resp.data.map(|d| d.myself.datacenters),
