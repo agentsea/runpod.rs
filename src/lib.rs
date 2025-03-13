@@ -2,7 +2,7 @@ use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-
+use tracing::info;
 const RUNPOD_GRAPHQL_URL: &str = "https://api.runpod.io/graphql";
 const RUNPOD_REST_BASE_URL: &str = "https://rest.runpod.io/v1";
 
@@ -29,20 +29,29 @@ impl RunpodClient {
         &self,
         graphql_body: &Value,
     ) -> Result<T, reqwest::Error> {
-        // Use bearer token authentication instead of query parameter
-        let resp = self
+        // Log the request we're about to make (without the API key)
+        info!("[RunPod] Making GraphQL request to {}", RUNPOD_GRAPHQL_URL);
+
+        // Create the request but don't send it yet
+        let request = self
             .http_client
             .post(RUNPOD_GRAPHQL_URL)
-            .bearer_auth(&self.api_key) // Use bearer auth instead of query param
-            .json(graphql_body)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<T>()
-            .await?;
-        Ok(resp)
-    }
+            .bearer_auth(&self.api_key)
+            .json(graphql_body);
 
+        // Send the request and get the response
+        let response = request.send().await?;
+
+        // Log the status code
+        info!("[RunPod] GraphQL response status: {}", response.status());
+
+        // Check for errors
+        let response = response.error_for_status()?;
+
+        // Parse the JSON response
+        let parsed = response.json::<T>().await?;
+        Ok(parsed)
+    }
     /// List GPU Types (only available in GraphQL).
     pub async fn list_gpu_types_graphql(&self) -> Result<GPUTypesListResponseData, reqwest::Error> {
         let query = r#"

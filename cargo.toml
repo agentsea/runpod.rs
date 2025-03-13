@@ -1,6 +1,6 @@
 [package]
 name = "runpod"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 description = "A Rust client for the RunPod API"
 license = "MIT"
@@ -15,3 +15,4 @@ reqwest = { version = "0.11", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tracing = "0.1.40"
