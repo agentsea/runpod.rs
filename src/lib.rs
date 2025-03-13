@@ -271,11 +271,11 @@ impl RunpodClient {
     //  B.1) Pods
     // -------------------------------------------------------------------------
     /// Create an **on-demand** (reserved) Pod using the REST API.
+
     pub async fn create_on_demand_pod(
         &self,
         req: CreateOnDemandPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
-        // Convert your custom request -> PodCreateInput
         let mut payload = serde_json::json!({
             "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
             "computeType": "GPU",
@@ -298,7 +298,6 @@ impl RunpodClient {
                 .collect::<std::collections::HashMap<_, _>>(),
         });
 
-        // If networkVolumeId is Some(...), insert it; if None, we skip it entirely.
         if let Some(network_volume_id) = req.network_volume_id {
             payload.as_object_mut().unwrap().insert(
                 "networkVolumeId".to_string(),
@@ -306,19 +305,26 @@ impl RunpodClient {
             );
         }
 
-        // Send the request and parse the response
-        let pod = self
+        let response = self
             .http_client
             .post("https://rest.runpod.io/v1/pods")
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&payload)
             .send()
-            .await?
-            .error_for_status()? // bubble up any HTTP error responses as `reqwest::Error`
-            .json::<Pod>()
             .await?;
 
-        // Return the parsed Pod inside our response struct
+        // Check status *without* consuming the response:
+        if let Err(status_err) = response.error_for_status_ref() {
+            // Capture the text/body *before* returning
+            let err_text = response.text().await.unwrap_or_else(|_| "".to_string());
+            eprintln!("RunPod create_on_demand_pod error body: {}", err_text);
+
+            // Now return the original err (or wrap it with more info)
+            return Err(status_err);
+        }
+
+        // If we get here, the response was 2xx success; parse the Pod from JSON
+        let pod = response.json::<Pod>().await?;
         Ok(PodCreateResponseData {
             data: Some(pod),
             errors: None,
@@ -1671,7 +1677,7 @@ mod tests {
             container_disk_in_gb: Some(50),
             min_vcpu_count: Some(4),
             min_memory_in_gb: Some(16),
-            gpu_type_id: Some("NVIDIA GeForce RTX 4090".to_string()),
+            gpu_type_id: Some("NVIDIA A100-SXM4-80GB".to_string()),
             name: Some("test_pod_from_rust".to_string()),
             image_name: Some(
                 "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04".to_string(),
