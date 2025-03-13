@@ -32,17 +32,23 @@ impl RunpodClient {
         // Log the request we're about to make (without the API key)
         info!("[RunPod] Making GraphQL request to {}", RUNPOD_GRAPHQL_URL);
 
-        // Format the request body like the Python implementation
-        let body = json!({ "query": query });
+        // Create the headers
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.append("Content-Type", "application/json".parse().unwrap());
+        headers.append("User-Agent", "Rust-RunPod-Client/1.0".parse().unwrap());
 
-        // Create the request with proper headers
+        // Format the request body exactly like the Python implementation
+        // Note: Python uses json.dumps({"query": query}) which serializes to a string
+        let body_json = json!({"query": query});
+        let body_string = serde_json::to_string(&body_json).unwrap();
+
+        // Create the request with proper headers and send as a string
         let request = self
             .http_client
             .post(RUNPOD_GRAPHQL_URL)
-            .header("Content-Type", "application/json")
-            .header("User-Agent", "Rust-RunPod-Client/1.0")
+            .headers(headers)
             .bearer_auth(&self.api_key)
-            .json(&body);
+            .body(body_string); // Send as string, not JSON
 
         // Send the request and get the response
         let response = request.send().await?;
@@ -1304,6 +1310,50 @@ impl CreateSpotPodRequest {
             min_upload_mbps: None,
             min_disk_bandwidth_mbps: None,
             template_id: None,
+        }
+    }
+}
+
+// ... existing code ...
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    #[tokio::test]
+    #[ignore] // This test is ignored by default since it requires an API key
+    async fn integration_test_list_gpu_types() {
+        // Get API key from environment variable
+        let api_key =
+            env::var("RUNPOD_API_KEY").expect("RUNPOD_API_KEY environment variable must be set");
+
+        // Create a real client
+        let client = RunpodClient::new(api_key);
+
+        // Make the actual API call
+        let result = client
+            .list_gpu_types_graphql()
+            .await
+            .expect("API call failed");
+
+        // Print the result for inspection
+        println!("GPU Types: {:#?}", result);
+
+        // Basic validation that we got some data
+        assert!(result.errors.is_none());
+        if let Some(gpu_types) = result.data {
+            assert!(!gpu_types.is_empty(), "Expected at least one GPU type");
+
+            // Print each GPU type
+            for gpu in &gpu_types {
+                println!(
+                    "- {} ({}): {}GB",
+                    gpu.display_name,
+                    gpu.id,
+                    gpu.memory_in_gb.unwrap_or(0)
+                );
+            }
         }
     }
 }
