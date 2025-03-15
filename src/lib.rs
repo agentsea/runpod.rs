@@ -450,6 +450,20 @@ impl RunpodClient {
         })
     }
 
+    pub async fn get_container_logs(&self, container_id: &str) -> Result<String, reqwest::Error> {
+        let endpoint = format!("https://hapi.runpod.net/containers/{container_id}/logs");
+        let container_logs: ContainerLogs = self
+            .http_client
+            .get(&endpoint)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?; // <= This automatically yields a `reqwest::Error` if JSON parsing fails.
+
+        Ok(container_logs.container.join("\n"))
+    }
+
     /// Get a Pod by ID.
     pub async fn get_pod(&self, pod_id: &str) -> Result<PodInfoResponseData, reqwest::Error> {
         let path = format!("pods/{pod_id}");
@@ -818,6 +832,11 @@ struct DatacentersResponse {
 #[derive(serde::Deserialize)]
 struct MyselfDatacenters {
     datacenters: Vec<DatacenterQ>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContainerLogs {
+    container: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
