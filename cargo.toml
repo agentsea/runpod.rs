@@ -1,6 +1,6 @@
 [package]
 name = "runpod"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 description = "A Rust client for the RunPod API"
 license = "MIT"
@@ -13,6 +13,6 @@ categories = ["api-bindings", "web-programming::http-client"]
 [dependencies]
 reqwest = { version = "0.12.12", features = ["json"] }
 tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.210", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1.40"
