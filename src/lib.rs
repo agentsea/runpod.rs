@@ -288,7 +288,7 @@ impl RunpodClient {
             "gpuTypeIds": [req.gpu_type_id.unwrap_or_default()],
             "name": req.name.unwrap_or_default(),
             "imageName": req.image_name.unwrap_or_default(),
-            "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default().split(" ").collect::<Vec<&str>>(),
+            "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default(),
             "ports": req.ports
                 .map(|p| vec![format!("{}/http", p)])
                 .unwrap_or_else(|| vec!["8888/http".to_string(), "22/tcp".to_string()]),
@@ -1468,8 +1468,8 @@ pub struct CreateOnDemandPodRequest {
     pub gpu_type_id: Option<String>,
     pub name: Option<String>,
     pub image_name: Option<String>,
-    pub docker_args: Option<String>,
-    pub docker_entrypoint: Option<String>,
+    pub docker_args: Option<Vec<String>>,
+    pub docker_entrypoint: Option<Vec<String>>,
     pub ports: Option<String>,
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
@@ -1489,7 +1489,8 @@ pub struct CreateSpotPodRequest {
     pub gpu_type_id: String,
     pub name: String,
     pub image_name: String,
-    pub docker_args: Option<String>,
+    pub docker_entrypoint: Option<Vec<String>>,
+    pub docker_args: Option<Vec<String>>,
     pub ports: Option<String>,
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
@@ -1536,11 +1537,7 @@ impl CreateOnDemandPodRequest {
             ports: Some(ports),
             env: Some(env_map),
             docker_start_cmd: None,
-            docker_entrypoint: if let Some(args) = &self.docker_args {
-                Some(args.split_whitespace().map(|s| s.to_string()).collect())
-            } else {
-                None
-            },
+            docker_entrypoint: self.docker_entrypoint.clone(),
             locked: None,
             container_registry_auth_id: None,
             allowed_cuda_versions: None,
@@ -1598,12 +1595,8 @@ impl CreateSpotPodRequest {
             volume_mount_path: self.volume_mount_path.clone(),
             ports: Some(ports),
             env: Some(env_map),
-            docker_start_cmd: if let Some(args) = &self.docker_args {
-                Some(args.split_whitespace().map(|s| s.to_string()).collect())
-            } else {
-                None
-            },
-            docker_entrypoint: None,
+            docker_start_cmd: self.docker_args.clone(),
+            docker_entrypoint: self.docker_entrypoint.clone(),
             locked: None,
             container_registry_auth_id: None,
             allowed_cuda_versions: None,
@@ -1698,7 +1691,11 @@ mod tests {
                 "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04".to_string(),
             ),
             docker_args: None,
-            docker_entrypoint: Some("sleep infinity".to_string()),
+            docker_entrypoint: Some(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "while true; do echo \"Hello from Docker Entrypoint!\"; sleep 5; done".to_string(),
+            ]),
             ports: Some("8888".to_string()),
             volume_mount_path: None,
             // volume_mount_path: Some("/workspace".to_string()),
