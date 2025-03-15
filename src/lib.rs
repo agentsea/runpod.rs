@@ -288,7 +288,7 @@ impl RunpodClient {
             "gpuTypeIds": [req.gpu_type_id.unwrap_or_default()],
             "name": req.name.unwrap_or_default(),
             "imageName": req.image_name.unwrap_or_default(),
-            "dockerStartCmd": req.docker_args.map(|args| vec![args]).unwrap_or_default(),
+            "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default().split(" ").collect::<Vec<&str>>(),
             "ports": req.ports
                 .map(|p| vec![format!("{}/http", p)])
                 .unwrap_or_else(|| vec!["8888/http".to_string(), "22/tcp".to_string()]),
@@ -439,6 +439,8 @@ impl RunpodClient {
                         support_public_ip: m.support_public_ip.unwrap_or_default(),
                         secure_cloud: m.secure_cloud.unwrap_or_default(),
                     }),
+                    docker_entrypoint: p.docker_entrypoint,
+                    docker_start_cmd: p.docker_start_cmd,
                 })
                 .collect(),
         };
@@ -499,6 +501,8 @@ impl RunpodClient {
                     secure_cloud: m.secure_cloud.unwrap_or_default(),
                     // Add other machine fields as needed
                 }),
+                docker_entrypoint: pod.docker_entrypoint,
+                docker_start_cmd: pod.docker_start_cmd,
                 // Add other fields as needed
             }),
             errors: None,
@@ -992,6 +996,10 @@ pub struct Pod {
     pub network_volume: Option<NetworkVolumeInfo>,
     #[serde(default)]
     pub savings_plans: Option<Vec<SavingsPlan>>,
+    #[serde(default)]
+    pub docker_entrypoint: Option<Vec<String>>,
+    #[serde(default)]
+    pub docker_start_cmd: Option<Vec<String>>,
     // Add other fields as needed
 }
 
@@ -1081,6 +1089,8 @@ pub struct PodInfoFull {
     pub last_started_at: Option<String>,
     pub network_volume: Option<NetworkVolume>,
     pub machine: Option<PodMachineInfo>,
+    pub docker_entrypoint: Option<Vec<String>>,
+    pub docker_start_cmd: Option<Vec<String>>,
     // Add other fields as needed
 }
 
@@ -1710,8 +1720,6 @@ mod tests {
         // Print the pod ID for reference
         if let Some(data) = pod_data.data {
             println!("Successfully created pod with ID: {}", data.id);
-            // Sleep for a few seconds to allow the pod to initialize
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
             // Get the pod details to verify it was created correctly
             match client.get_pod(&data.id).await {
@@ -1722,6 +1730,9 @@ mod tests {
                     println!("Error getting pod details: {:?}", e);
                 }
             }
+            // Sleep for a few seconds to allow the pod to initialize
+            tokio::time::sleep(tokio::time::Duration::from_secs(500000)).await;
+
             // Now delete the pod
             client
                 .delete_pod(&data.id)
