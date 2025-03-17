@@ -1488,7 +1488,7 @@ pub struct CreateOnDemandPodRequest {
     pub image_name: Option<String>,
     pub docker_args: Option<Vec<String>>,
     pub docker_entrypoint: Option<Vec<String>>,
-    pub ports: Option<String>,
+    pub ports: Option<Vec<String>>,
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
@@ -1509,7 +1509,7 @@ pub struct CreateSpotPodRequest {
     pub image_name: String,
     pub docker_entrypoint: Option<Vec<String>>,
     pub docker_args: Option<Vec<String>>,
-    pub ports: Option<String>,
+    pub ports: Option<Vec<String>>,
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
@@ -1531,15 +1531,6 @@ impl CreateOnDemandPodRequest {
         } else {
             vec![]
         };
-        let ports: Vec<String> = if let Some(ports_str) = &self.ports {
-            ports_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        } else {
-            vec![]
-        };
         let env_map: HashMap<String, String> = self
             .env
             .iter()
@@ -1552,7 +1543,7 @@ impl CreateOnDemandPodRequest {
             container_disk_in_gb: self.container_disk_in_gb,
             volume_in_gb: self.volume_in_gb,
             volume_mount_path: self.volume_mount_path.clone(),
-            ports: Some(ports),
+            ports: self.ports.clone(),
             env: Some(env_map),
             docker_start_cmd: None,
             docker_entrypoint: self.docker_entrypoint.clone(),
@@ -1590,15 +1581,6 @@ impl CreateSpotPodRequest {
         } else {
             vec![self.gpu_type_id.clone()]
         };
-        let ports: Vec<String> = if let Some(ports_str) = &self.ports {
-            ports_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        } else {
-            vec![]
-        };
         let env_map: HashMap<String, String> = self
             .env
             .iter()
@@ -1611,7 +1593,7 @@ impl CreateSpotPodRequest {
             container_disk_in_gb: Some(self.container_disk_in_gb),
             volume_in_gb: Some(self.volume_in_gb),
             volume_mount_path: self.volume_mount_path.clone(),
-            ports: Some(ports),
+            ports: self.ports.clone(),
             env: Some(env_map),
             docker_start_cmd: self.docker_args.clone(),
             docker_entrypoint: self.docker_entrypoint.clone(),
@@ -1714,7 +1696,7 @@ mod tests {
                 "-c".to_string(),
                 "while true; do echo \"Hello from Docker Entrypoint!\"; sleep 5; done".to_string(),
             ]),
-            ports: Some("8888".to_string()),
+            ports: Some(vec!["8888/http".to_string(), "22/tcp".to_string()]),
             volume_mount_path: None,
             // volume_mount_path: Some("/workspace".to_string()),
             env: env_vec,
