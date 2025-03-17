@@ -289,6 +289,7 @@ impl RunpodClient {
             "name": req.name.unwrap_or_default(),
             "imageName": req.image_name.unwrap_or_default(),
             "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default(),
+            "supportPublicIp": true,
             "ports": req.ports
                 .map(|p| vec![format!("{}/http", p)])
                 .unwrap_or_else(|| vec!["8888/http".to_string(), "22/tcp".to_string()]),
