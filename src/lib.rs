@@ -272,6 +272,114 @@ impl RunpodClient {
         Ok(resp)
     }
 
+    /// Exactly replicates the request:
+    ///
+    /// operationName: "getAllDatacenters"
+    /// query:
+    ///   query getAllDatacenters($input: GpuAvailabilityInput) {
+    ///     dataCenters {
+    ///       id
+    ///       name
+    ///       location
+    ///       storageSupport
+    ///       gpuAvailability(input: $input) {
+    ///         stockStatus
+    ///         gpuTypeId
+    ///         gpuTypeDisplayName
+    ///         displayName
+    ///         __typename
+    ///       }
+    ///       __typename
+    ///     }
+    ///   }
+    /// variables:
+    ///   {
+    ///     "input": {
+    ///       "gpuCount": 1,
+    ///       "minDisk": 0,
+    ///       "minMemoryInGb": 8,
+    ///       "minVcpuCount": 2,
+    ///       "secureCloud": true,
+    ///       "includeAiApi": false
+    ///     }
+    ///   }
+    ///
+    /// Returns the raw JSON-serialized GraphQL response as a `serde_json::Value`.
+    pub async fn fetch_all_datacenters(
+        &self,
+        input: Option<GpuAvailabilityInput>,
+    ) -> Result<GraphQLResponse<serde_json::Value>, reqwest::Error> {
+        let query = r#"
+            query getAllDatacenters($input: GpuAvailabilityInput) {
+              dataCenters {
+                id
+                name
+                location
+                storageSupport
+                gpuAvailability(input: $input) {
+                  stockStatus
+                  gpuTypeId
+                  gpuTypeDisplayName
+                  displayName
+                  __typename
+                }
+                __typename
+              }
+            }
+        "#;
+
+        let operation_name = "getAllDatacenters";
+
+        // The exact variables object the request uses
+        let variables = serde_json::json!({
+            "input": {
+                "gpuCount": 1,
+                "minDisk": 0,
+                "minMemoryInGb": 8,
+                "minVcpuCount": 2,
+                "secureCloud": true,
+                "includeAiApi": false
+                // "allowedCudaVersions": ["abc123"],
+            }
+        });
+
+        // Manually build the JSON payload to include the "operationName"
+        let payload = serde_json::json!({
+            "operationName": operation_name,
+            "query": query,
+            "variables": variables
+        });
+
+        // Perform the HTTP POST to RunPod's GraphQL endpoint with exactly this body
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            "Rust-RunPod-Client/1.0".parse().unwrap(),
+        );
+
+        let response = self
+            .http_client
+            .post("https://api.runpod.io/graphql")
+            .headers(headers)
+            .bearer_auth(&self.api_key)
+            .json(&payload)
+            .send()
+            .await?;
+
+        // Return an error if status is not 200
+        let response = response.error_for_status()?;
+
+        // Parse the JSON response into our generic GraphQLResponse<Value>
+        let parsed = response
+            .json::<GraphQLResponse<serde_json::Value>>()
+            .await?;
+        Ok(parsed)
+    }
+
     /// Fetches the `podHostId` for a given container (pod) ID by scanning the results
     /// of `fetch_my_pods()`. Returns `Ok(Some(pod_host_id))` if found, `Ok(None)` otherwise.
     pub async fn get_pod_host_id(
@@ -456,6 +564,90 @@ impl RunpodClient {
             self.graphql_query_with_variables(query, variables).await?;
 
         Ok(resp)
+    }
+
+    pub fn parse_datacenters_response(
+        &self,
+        raw: GraphQLResponse<serde_json::Value>,
+    ) -> Result<GraphQLResponse<DataCentersRoot>, serde_json::Error> {
+        if let Some(data_value) = raw.data {
+            // Attempt to deserialize just the "data" portion into our struct.
+            let parsed_data = serde_json::from_value::<DataCentersRoot>(data_value)?;
+            Ok(GraphQLResponse {
+                data: Some(parsed_data),
+                errors: raw.errors,
+            })
+        } else {
+            // If raw.data is None, we still return a GraphQLResponse, but with no data
+            Ok(GraphQLResponse {
+                data: None,
+                errors: raw.errors,
+            })
+        }
+    }
+
+    /// Fetch all data centers with optional GPU availability filtering.
+    ///
+    /// This uses the query:
+    /// ```graphql
+    /// query getAllDatacenters($input: GpuAvailabilityInput) {
+    ///   dataCenters {
+    ///     id
+    ///     name
+    ///     location
+    ///     storageSupport
+    ///     gpuAvailability(input: $input) {
+    ///       stockStatus
+    ///       gpuTypeId
+    ///       gpuTypeDisplayName
+    ///       displayName
+    ///       __typename
+    ///     }
+    ///     __typename
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// The `GpuAvailabilityInput` struct below is just an example.  
+    /// Adjust the fields to match exactly what your RunPod GraphQL schema expects.
+    pub async fn get_all_datacenters_query(
+        &self,
+        input: Option<GpuAvailabilityInput>,
+    ) -> Result<GetAllDatacentersResponse, reqwest::Error> {
+        let query = r#"
+            query getAllDatacenters($input: GpuAvailabilityInput) {
+              dataCenters {
+                id
+                name
+                location
+                storageSupport
+                gpuAvailability(input: $input) {
+                  stockStatus
+                  gpuTypeId
+                  gpuTypeDisplayName
+                  displayName
+                  __typename
+                }
+                __typename
+              }
+            }
+        "#;
+
+        // If you have some known fields, you can define them in `GpuAvailabilityInput`.
+        // Otherwise, you can treat it as a generic object (serde_json::Value).
+        let variables = match input {
+            Some(i) => serde_json::json!({ "input": i }),
+            None => serde_json::json!({}), // no variables
+        };
+
+        // We expect a GraphQLResponse of our DataCentersResponse type
+        let resp: GraphQLResponse<DataCentersResponse> =
+            self.graphql_query_with_variables(query, variables).await?;
+
+        Ok(GetAllDatacentersResponse {
+            data: resp.data,
+            errors: resp.errors,
+        })
     }
 
     /// Example helper method if you don't have one yet.
@@ -801,6 +993,77 @@ impl RunpodClient {
         Ok(container_logs.container.join("\n"))
     }
 
+    pub async fn find_datacenters_with_desired_gpu(
+        &self,
+        desired_gpu_type_id: &str,
+        desired_count: i32,
+    ) -> Result<Vec<DataCenterItem>, Box<dyn std::error::Error>> {
+        // 1) Fetch all data centers with the user’s input (i.e., GPU count, etc.).
+        let input = GpuAvailabilityInput {
+            gpu_count: Some(desired_count),
+            min_disk: None,
+            min_memory_in_gb: None,
+            min_vcpu_count: None,
+            secure_cloud: None,
+            allowed_cuda_versions: None,
+            include_ai_api: None,
+        };
+        let response = self.fetch_all_datacenters(Some(input)).await?;
+        let parsed_response = self.parse_datacenters_response(response)?;
+
+        if let Some(payload) = parsed_response.data {
+            let mut matching_datacenters = Vec::new();
+
+            // 2) Iterate over each data center.
+            for dc in payload.data_centers {
+                println!("\n\nDatacenter: {:?}", dc);
+                // a) Filter the gpu_availability array so that we only keep
+                //    stockStatus == "High", "Medium", or "Low".
+                let mut filtered_availability: Vec<GpuAvailabilityItem> = dc
+                    .gpu_availability
+                    .into_iter()
+                    .filter(|ga| {
+                        matches!(
+                            ga.stockStatus.as_deref(),
+                            Some("High") | Some("Medium") | Some("Low")
+                        )
+                    })
+                    .collect();
+
+                // b) Sort in descending order: High > Medium > Low.
+                filtered_availability.sort_by_key(|ga| match ga.stockStatus.as_deref() {
+                    Some("High") => 3,
+                    Some("Medium") => 2,
+                    Some("Low") => 1,
+                    _ => 0, // We already filtered out everything else, but just in case
+                });
+                filtered_availability.reverse();
+
+                // c) Check if any of these filtered items match the desired GPU ID.
+                //    If so, we consider this data center a match.
+                let found_match = filtered_availability
+                    .iter()
+                    .any(|ga| ga.gpuTypeId.as_deref() == Some(desired_gpu_type_id));
+
+                // d) Only add this data center to results if there's a matching GPU ID
+                //    and the data center has at least one availability entry after filtering.
+                if found_match && !filtered_availability.is_empty() {
+                    // Rebuild a DataCenterItem with just the filtered GPU availability.
+                    let new_dc = DataCenterItem {
+                        gpu_availability: filtered_availability,
+                        ..dc
+                    };
+                    matching_datacenters.push(new_dc);
+                }
+            }
+
+            Ok(matching_datacenters)
+        } else {
+            // If there’s no data, return an empty vec (or handle however you like).
+            Ok(Vec::new())
+        }
+    }
+
     /// Get a Pod by ID.
     pub async fn get_pod(&self, pod_id: &str) -> Result<PodInfoResponseData, reqwest::Error> {
         let path = format!("pods/{pod_id}");
@@ -886,6 +1149,56 @@ impl RunpodClient {
         Ok(vol)
     }
 
+    /// Ensures that a volume of a given name and size exists in the specified datacenter.
+    /// - If the volume already exists, checks if it's smaller than `desired_size`.
+    /// - If smaller, it updates (resizes) it.
+    /// - If no volume exists, creates a new one.
+    ///
+    /// Returns the final (existing or newly-created) `NetworkVolume`.
+    pub async fn ensure_volume_in_datacenter(
+        &self,
+        volume_name: &str,
+        data_center_id: &str,
+        desired_size: i32,
+    ) -> Result<NetworkVolume, reqwest::Error> {
+        // 1) Check if a volume by name + datacenter already exists.
+        let maybe_existing_volume = self
+            .find_volume_by_name_in_datacenter(volume_name, data_center_id)
+            .await?;
+
+        match maybe_existing_volume {
+            Some(existing_volume) => {
+                // 2) If the existing volume is smaller than desired, resize it.
+                if existing_volume.size < desired_size {
+                    // Update (resize) the volume
+                    let updated = self
+                        .update_network_volume(
+                            &existing_volume.id,
+                            NetworkVolumeUpdateInput {
+                                name: None, // Keep the same name
+                                size: Some(desired_size),
+                            },
+                        )
+                        .await?;
+                    Ok(updated)
+                } else {
+                    // Already big enough; no change needed
+                    Ok(existing_volume)
+                }
+            }
+            None => {
+                // 3) Create a new volume since none was found.
+                let new_vol_input = NetworkVolumeCreateInput {
+                    name: volume_name.to_string(),
+                    size: desired_size,
+                    data_center_id: data_center_id.to_string(),
+                };
+                let new_volume = self.create_network_volume(new_vol_input).await?;
+                Ok(new_volume)
+            }
+        }
+    }
+
     /// List all **Network Volumes**.
     pub async fn list_network_volumes(&self) -> Result<Vec<NetworkVolume>, reqwest::Error> {
         let resp = self
@@ -913,6 +1226,26 @@ impl RunpodClient {
 
         let vol = resp.json::<NetworkVolume>().await?;
         Ok(vol)
+    }
+
+    /// Attempts to find a volume by name within a specific datacenter.
+    ///
+    /// Returns `Ok(Some(NetworkVolume))` if found, or `Ok(None)` if no match.
+    pub async fn find_volume_by_name_in_datacenter(
+        &self,
+        volume_name: &str,
+        data_center_id: &str,
+    ) -> Result<Option<NetworkVolume>, reqwest::Error> {
+        // 1) Fetch all volumes
+        let volumes = self.list_network_volumes().await?;
+
+        // 2) Filter to match both the user-provided volume name and dataCenter ID
+        let found_volume = volumes
+            .into_iter()
+            .find(|v| v.name == volume_name && v.data_center_id == data_center_id);
+
+        // 3) Return
+        Ok(found_volume)
     }
 
     /// Update (rename or resize) a Network Volume.  
@@ -1082,6 +1415,45 @@ pub struct GpuType {
     pub secure_spot_price: Option<f64>,
 }
 
+/// The actual shape under the `.data` field:
+/// {
+///   "dataCenters": [ { "id": ..., "name": ..., "location": ..., ... }, ... ]
+/// }
+#[derive(Debug, serde::Deserialize)]
+pub struct DataCentersRoot {
+    #[serde(rename = "dataCenters")]
+    pub data_centers: Vec<DataCenterItem>,
+}
+
+/// Represents one of the objects in that "dataCenters" array.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DataCenterItem {
+    /// In the JSON, this is spelled `"__typename": "DataCenter"`.
+    #[serde(rename = "__typename")]
+    pub typename: Option<String>,
+
+    pub id: String,
+    pub name: String,
+    pub location: String,
+    pub storageSupport: bool,
+
+    #[serde(rename = "gpuAvailability")]
+    pub gpu_availability: Vec<GpuAvailabilityItem>,
+}
+
+/// Each entry under `"gpuAvailability": [ { ... }, ... ]`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GpuAvailabilityItem {
+    #[serde(rename = "__typename")]
+    pub typename: Option<String>,
+
+    /// Some fields might be null, so make them Option<String>.
+    pub stockStatus: Option<String>,
+    pub gpuTypeId: Option<String>,
+    pub gpuTypeDisplayName: Option<String>,
+    pub displayName: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct GpuTypeMinimal {
     pub id: String,
@@ -1219,6 +1591,86 @@ pub struct GpuAvailability {
 #[derive(Debug)]
 pub struct DatacentersResponseData {
     pub data: Option<Vec<DataCenter>>,
+    pub errors: Option<Vec<GraphQLError>>,
+}
+
+/// Example input fields for GPU availability, adjust to your actual schema:
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuAvailabilityInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_count: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_disk: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_memory_in_gb: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_vcpu_count: Option<i32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secure_cloud: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_cuda_versions: Option<Vec<String>>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_ai_api: Option<bool>,
+}
+
+/// The top-level "data" returned by this query.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DataCentersResponse {
+    /// Matches the query's `dataCenters` field
+    #[serde(rename = "dataCenters")]
+    pub data_centers: Vec<DataCenterItem>,
+}
+
+// /// Represents a single data center in the response.
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct DataCenterItem {
+//     pub id: String,
+//     pub name: Option<String>,
+//     pub location: Option<String>,
+
+//     /// Some schemas might have "storageSupport" as a string or boolean—adjust accordingly
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub storageSupport: Option<String>,
+
+//     /// For each Data Center, returns a list of GPU availability.
+//     #[serde(rename = "gpuAvailability")]
+//     pub gpu_availability: Vec<GpuAvailabilityItem>,
+// }
+
+// /// Represents the GPU availability item(s) within each data center.
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct GpuAvailabilityItem {
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub stockStatus: Option<String>,
+
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub gpuTypeId: Option<String>,
+
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub gpuTypeDisplayName: Option<String>,
+
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub displayName: Option<String>,
+
+//     #[serde(rename = "__typename")]
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub typename: Option<String>,
+// }
+
+/// Wraps the final response that includes `data` (or `errors`).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct GetAllDatacentersResponse {
+    /// The main response data
+    pub data: Option<DataCentersResponse>,
+
+    /// Any GraphQL errors returned
     pub errors: Option<Vec<GraphQLError>>,
 }
 
@@ -2008,6 +2460,30 @@ mod tests {
         // Create a real client
         let client = RunpodClient::new(api_key);
 
+        let desired_gpu_type_id = "NVIDIA A100-SXM4-80GB".to_string();
+        let desired_gpu_count = 1;
+
+        let datacenters = client
+            .find_datacenters_with_desired_gpu(&desired_gpu_type_id, desired_gpu_count)
+            .await
+            .expect("Failed to find datacenters");
+
+        // grab the first datacenter
+        let datacenter = datacenters.first().unwrap();
+        println!("\n\nselected datacenter: {:?}", datacenter);
+
+        let volume = match client
+            .ensure_volume_in_datacenter("nebulous-test", &datacenter.id, 500)
+            .await
+        {
+            Ok(vol) => vol,
+            Err(e) => {
+                panic!("Error ensuring volume");
+            }
+        };
+
+        println!("Ensured volume exists: {:?}", volume);
+
         // Create environment variables for the pod
         let env_vec = vec![EnvVar {
             key: "TEST_VAR".to_string(),
@@ -2034,10 +2510,10 @@ mod tests {
                 "while true; do echo \"Hello from Docker Entrypoint!\"; sleep 5; done".to_string(),
             ]),
             ports: Some(vec!["8888/http".to_string(), "22/tcp".to_string()]),
-            volume_mount_path: None,
+            volume_mount_path: Some("/mnt/nebulous-test".to_string()),
             // volume_mount_path: Some("/workspace".to_string()),
             env: env_vec,
-            network_volume_id: None,
+            network_volume_id: Some(volume.id),
         };
 
         // Make the actual API call
@@ -2045,7 +2521,7 @@ mod tests {
 
         // Print any error details for debugging
         if let Err(ref e) = result {
-            println!("Error creating pod: {:?}", e);
+            println!("\nError creating pod: {:?}", e);
         }
 
         // Verify the result
@@ -2053,12 +2529,12 @@ mod tests {
 
         // Print the pod ID for reference
         if let Some(data) = pod_data.data {
-            println!("Successfully created pod with ID: {}", data.id);
+            println!("\nSuccessfully created pod with ID: {}", data.id);
 
             // Get the pod details to verify it was created correctly
             match client.get_pod(&data.id).await {
                 Ok(pod_info) => {
-                    println!("Pod details: {:?}", pod_info);
+                    println!("\nPod details: {:?}", pod_info);
                 }
                 Err(e) => {
                     println!("Error getting pod details: {:?}", e);
@@ -2068,7 +2544,7 @@ mod tests {
             println!("Fetching my pods...");
             match client.fetch_my_pods().await {
                 Ok(pods) => {
-                    println!("Pods: {:?}", pods);
+                    println!("\nPods: {:?}", pods);
                 }
                 Err(e) => {
                     println!("Error getting pods: {:?}", e);
@@ -2077,21 +2553,21 @@ mod tests {
             println!("\n\nfetch my pod");
             match client.get_pod_host_id(&data.id).await {
                 Ok(pods) => {
-                    println!("Pod host id: {:?}", pods);
+                    println!("\nPod host id: {:?}", pods);
                 }
                 Err(e) => {
                     println!("Error getting pods: {:?}", e);
                 }
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(20000)).await;
 
             // Now delete the pod
             client
                 .delete_pod(&data.id)
                 .await
                 .expect("Failed to delete the pod");
-            println!("Deleted pod with ID: {}", data.id);
+            println!("\nDeleted pod with ID: {}", data.id);
         } else {
             panic!("No pod data returned");
         }
