@@ -154,6 +154,124 @@ impl RunpodClient {
         })
     }
 
+    /// Executes the "myPods" GraphQL query against RunPod's API.
+    ///
+    /// Returns a `GraphQLResponse<serde_json::Value>`, allowing you to parse
+    /// the results as desired. If you want typed responses, replace
+    /// `serde_json::Value` with your own deserialized struct that matches
+    /// the query's return shape.
+    pub async fn fetch_my_pods(
+        &self,
+    ) -> Result<GraphQLResponse<serde_json::Value>, reqwest::Error> {
+        let query = r#"
+            query myPods {
+              myself {
+                id
+                clientBalance
+                savingsPlans {
+                  startTime
+                  endTime
+                  gpuTypeId
+                  podId
+                  costPerHr
+                  __typename
+                }
+                pods {
+                  savingsPlans {
+                    gpuTypeId
+                    endTime
+                    costPerHr
+                    __typename
+                  }
+                  clusterId
+                  containerDiskInGb
+                  containerRegistryAuthId
+                  costPerHr
+                  adjustedCostPerHr
+                  desiredStatus
+                  dockerArgs
+                  dockerId
+                  env
+                  gpuCount
+                  id
+                  imageName
+                  lastStatusChange
+                  locked
+                  machineId
+                  memoryInGb
+                  name
+                  networkVolume {
+                    id
+                    name
+                    size
+                    __typename
+                  }
+                  ipAddress {
+                    address
+                    __typename
+                  }
+                  cpuFlavorId
+                  machineType
+                  cpuFlavor {
+                    groupName
+                    displayName
+                    __typename
+                  }
+                  podType
+                  port
+                  ports
+                  templateId
+                  uptimeSeconds
+                  vcpuCount
+                  version
+                  volumeEncrypted
+                  volumeInGb
+                  volumeMountPath
+                  machine {
+                    costPerHr
+                    currentPricePerGpu
+                    diskMBps
+                    gpuAvailable
+                    gpuDisplayName
+                    location
+                    maintenanceEnd
+                    maintenanceNote
+                    maintenanceStart
+                    minPodGpuCount
+                    maxDownloadSpeedMbps
+                    maxUploadSpeedMbps
+                    note
+                    podHostId
+                    secureCloud
+                    supportPublicIp
+                    gpuTypeId
+                    globalNetwork
+                    gpuType {
+                      secureSpotPrice
+                      communitySpotPrice
+                      oneMonthPrice
+                      threeMonthPrice
+                      sixMonthPrice
+                      __typename
+                    }
+                    __typename
+                  }
+                  __typename
+                }
+                __typename
+              }
+            }
+        "#;
+
+        // Use the same GraphQL request method as other functions in this client.
+        // This assumes you have a generic `graphql_query<T>` function that:
+        //   1) Wraps the query in JSON body
+        //   2) Sends an HTTP POST to RunPod's endpoint
+        //   3) Deserializes the JSON response into `GraphQLResponse<T>`
+        let resp: GraphQLResponse<serde_json::Value> = self.graphql_query(&query).await?;
+        Ok(resp)
+    }
+
     // pub async fn list_available_gpus_with_datacenters(
     //     &self,
     // ) -> Result<GraphQLResponse<Vec<GpuTypeWithDatacenters>>, Box<dyn std::error::Error>> {
@@ -450,7 +568,7 @@ impl RunpodClient {
     }
 
     pub async fn get_container_logs(&self, container_id: &str) -> Result<String, reqwest::Error> {
-        let endpoint = format!("https://hapi.runpod.net/containers/{container_id}/logs");
+        let endpoint = format!("https://hapi.runpod.net/v1/pod/{container_id}/logs");
         let container_logs: ContainerLogs = self
             .http_client
             .get(&endpoint)
@@ -1662,7 +1780,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // This test is ignored by default since it requires an API key
     async fn integration_test_create_on_demand_pod() {
         // Get API key from environment variable
         let api_key =
@@ -1725,6 +1842,27 @@ mod tests {
                 }
                 Err(e) => {
                     println!("Error getting pod details: {:?}", e);
+                }
+            }
+
+            println!("Fetching my pods...");
+            match client.fetch_my_pods().await {
+                Ok(pods) => {
+                    println!("Pods: {:?}", pods);
+                }
+                Err(e) => {
+                    println!("Error getting pods: {:?}", e);
+                }
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+
+            match client.get_container_logs(&data.id).await {
+                Ok(logs) => {
+                    println!("Container logs: {}", logs);
+                }
+                Err(e) => {
+                    println!("Error getting container logs: {:?}", e);
                 }
             }
             // Sleep for a few seconds to allow the pod to initialize
