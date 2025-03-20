@@ -272,6 +272,226 @@ impl RunpodClient {
         Ok(resp)
     }
 
+    /// Fetches the `podHostId` for a given container (pod) ID by scanning the results
+    /// of `fetch_my_pods()`. Returns `Ok(Some(pod_host_id))` if found, `Ok(None)` otherwise.
+    pub async fn get_pod_host_id(
+        &self,
+        container_id: &str,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        // Fetch all pods tied to the account
+        let pods_response = self.fetch_my_pods().await?;
+
+        // Make sure we have valid data in pods_response.data
+        if let Some(data) = pods_response.data {
+            if let Some(myself) = data.get("myself") {
+                // Attempt to extract "pods" array from the JSON structure
+                if let Some(pods_value) = myself.get("pods") {
+                    if let Some(pods_array) = pods_value.as_array() {
+                        // Iterate through each pod object
+                        for pod in pods_array {
+                            // Each `pod` should have an "id" and "machine" with "podHostId"
+                            if let Some(pod_id) = pod.get("id").and_then(|v| v.as_str()) {
+                                if pod_id == container_id {
+                                    if let Some(machine) = pod.get("machine") {
+                                        if let Some(pod_host_id) =
+                                            machine.get("podHostId").and_then(|v| v.as_str())
+                                        {
+                                            return Ok(Some(pod_host_id.to_string()));
+                                        }
+                                    }
+                                    // Found our pod, but no machine/podHostId was present
+                                    return Ok(None);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we didn’t find the matching ID, return None
+        Ok(None)
+    }
+
+    /// Fetch a single RunPod Pod by ID using `pod(input: PodFilter)`,
+    /// returning *all* fields shown in your example schema snippet,
+    /// inlined (no separate fragments needed).
+    pub async fn fetch_my_pod(
+        &self,
+        pod_id: &str,
+    ) -> Result<GraphQLResponse<serde_json::Value>, reqwest::Error> {
+        // 1) Define the query with all fields from your snippet.
+        //    We inline everything: gpus, registry, cpuFlavor, etc.
+        //    If you have additional fields or only want some subset,
+        //    adjust accordingly.
+        let query = r#"
+        query singlePod($input: PodFilter) {
+          pod(input: $input) {
+            lowestBidPriceToResume
+            aiApiId
+            apiKey
+            consumerUserId
+            containerDiskInGb
+            containerRegistryAuthId
+            costMultiplier
+            costPerHr
+            createdAt
+            adjustedCostPerHr
+            desiredStatus
+            dockerArgs
+            dockerId
+            env
+            gpuCount
+            gpuPowerLimitPercent
+            gpus {
+              id
+              displayName
+              memoryInGb
+              # inline other GPU fields if needed
+            }
+            id
+            imageName
+            lastStatusChange
+            locked
+            machineId
+            memoryInGb
+            name
+            podType
+            port
+            ports
+            registry {
+              container
+              createdAt
+              # inline other PodRegistry fields if needed
+            }
+            templateId
+            uptimeSeconds
+            vcpuCount
+            version
+            volumeEncrypted
+            volumeInGb
+            volumeKey
+            volumeMountPath
+            lastStartedAt
+            cpuFlavorId
+            machineType
+            slsVersion
+            networkVolumeId
+            cpuFlavor {
+              id
+              displayName
+              groupName
+              # inline other CpuFlavor fields if needed
+            }
+            runtime {
+              uptimeInSeconds
+              # inline other PodRuntime fields if needed
+            }
+            machine {
+              costPerHr
+              currentPricePerGpu
+              diskMBps
+              gpuAvailable
+              gpuDisplayName
+              location
+              maintenanceEnd
+              maintenanceNote
+              maintenanceStart
+              minPodGpuCount
+              maxDownloadSpeedMbps
+              maxUploadSpeedMbps
+              note
+              podHostId
+              secureCloud
+              supportPublicIp
+              gpuTypeId
+              globalNetwork
+              gpuType {
+                secureSpotPrice
+                communitySpotPrice
+                oneMonthPrice
+                threeMonthPrice
+                sixMonthPrice
+                __typename
+              }
+              __typename
+            }
+            latestTelemetry {
+              # inline Telemetry fields as needed
+              someTelemetryField
+            }
+            endpoint {
+              id
+              name
+              # inline other Endpoint fields if needed
+            }
+            networkVolume {
+              id
+              name
+              size
+              dataCenterId
+              # inline other NetworkVolume fields if needed
+            }
+            savingsPlans {
+              id
+              gpuTypeId
+              costPerHr
+              startTime
+              endTime
+              podId
+              # inline other SavingsPlan fields if needed
+            }
+          }
+        }
+    "#;
+
+        // 2) Supply the Pod ID via GraphQL variables.
+        let variables = serde_json::json!({
+            "input": { "id": pod_id }
+        });
+
+        // 3) Use (or adapt) a helper that POSTs `query` + `variables` to RunPod’s GraphQL.
+        //    If you already have a `graphql_query_with_variables` method, reuse it here.
+        let resp: GraphQLResponse<serde_json::Value> =
+            self.graphql_query_with_variables(query, variables).await?;
+
+        Ok(resp)
+    }
+
+    /// Example helper method if you don't have one yet.
+    /// Adjust as needed to fit your existing code.
+    async fn graphql_query_with_variables<T: for<'de> serde::Deserialize<'de>>(
+        &self,
+        query: &str,
+        variables: serde_json::Value,
+    ) -> Result<T, reqwest::Error> {
+        use reqwest::header::{HeaderMap, CONTENT_TYPE, USER_AGENT};
+        use serde_json::json;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        headers.insert(USER_AGENT, "Rust-RunPod-Client/1.0".parse().unwrap());
+
+        // The runpod GraphQL endpoint; adjust if your client stores it differently.
+        // e.g. "https://api.runpod.io/graphql"
+        let endpoint = "https://api.runpod.io/graphql";
+
+        let body_json = json!({ "query": query, "variables": variables });
+        let body_string = serde_json::to_string(&body_json).unwrap();
+
+        let response = self
+            .http_client
+            .post(endpoint)
+            .headers(headers)
+            .bearer_auth(&self.api_key)
+            .body(body_string)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let parsed = response.json::<T>().await?;
+        Ok(parsed)
+    }
     // pub async fn list_available_gpus_with_datacenters(
     //     &self,
     // ) -> Result<GraphQLResponse<Vec<GpuTypeWithDatacenters>>, Box<dyn std::error::Error>> {
@@ -1854,19 +2074,17 @@ mod tests {
                     println!("Error getting pods: {:?}", e);
                 }
             }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-
-            match client.get_container_logs(&data.id).await {
-                Ok(logs) => {
-                    println!("Container logs: {}", logs);
+            println!("\n\nfetch my pod");
+            match client.get_pod_host_id(&data.id).await {
+                Ok(pods) => {
+                    println!("Pod host id: {:?}", pods);
                 }
                 Err(e) => {
-                    println!("Error getting container logs: {:?}", e);
+                    println!("Error getting pods: {:?}", e);
                 }
             }
-            // Sleep for a few seconds to allow the pod to initialize
-            tokio::time::sleep(tokio::time::Duration::from_secs(500000)).await;
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
             // Now delete the pod
             client
