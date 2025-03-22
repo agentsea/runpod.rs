@@ -485,6 +485,25 @@ impl RunpodClient {
             machineType
             slsVersion
             networkVolumeId
+            runtime {
+                uptimeInSeconds
+                ports {
+                    ip
+                    isIpPublic
+                    privatePort
+                    publicPort
+                    type
+                }
+                gpus {
+                    id
+                    gpuUtilPercent
+                    memoryUtilPercent
+                }
+                container {
+                    cpuPercent
+                    memoryPercent
+                }
+            }
             cpuFlavor {
               id
               displayName
@@ -648,6 +667,44 @@ impl RunpodClient {
             data: resp.data,
             errors: resp.errors,
         })
+    }
+
+    pub async fn fetch_my_pods_with_ports(
+        &self,
+    ) -> Result<GraphQLResponse<PodsWithPortsData>, reqwest::Error> {
+        let query = r#"
+            query Pods {
+              myself {
+                pods {
+                  id
+                  name
+                  runtime {
+                    uptimeInSeconds
+                    ports {
+                      ip
+                      isIpPublic
+                      privatePort
+                      publicPort
+                      type
+                    }
+                    gpus {
+                      id
+                      gpuUtilPercent
+                      memoryUtilPercent
+                    }
+                    container {
+                      cpuPercent
+                      memoryPercent
+                    }
+                  }
+                }
+              }
+            }
+        "#;
+
+        // Re-use your existing generic `graphql_query<T>` method from the client
+        let response: GraphQLResponse<PodsWithPortsData> = self.graphql_query(&query).await?;
+        Ok(response)
     }
 
     /// Example helper method if you don't have one yet.
@@ -1674,6 +1731,74 @@ pub struct GetAllDatacentersResponse {
     pub errors: Option<Vec<GraphQLError>>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct PodsWithPortsData {
+    pub myself: MyselfPodsWithPorts,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct MyselfPodsWithPorts {
+    pub pods: Vec<PodWithPorts>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PodWithPorts {
+    pub id: String,
+    pub name: String,
+
+    // runtime is optional if some pods don’t have it
+    pub runtime: Option<PodRuntimePorts>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PodRuntimePorts {
+    #[serde(rename = "uptimeInSeconds")]
+    pub uptime_in_seconds: i64,
+
+    pub ports: Vec<PodNetworkPort>,
+
+    pub gpus: Vec<PodGpuStats>,
+
+    pub container: PodContainerStats,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PodNetworkPort {
+    pub ip: String,
+
+    #[serde(rename = "isIpPublic")]
+    pub is_ip_public: bool,
+
+    #[serde(rename = "privatePort")]
+    pub private_port: u16,
+
+    #[serde(rename = "publicPort")]
+    pub public_port: u16,
+
+    #[serde(rename = "type")]
+    pub port_type: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PodGpuStats {
+    pub id: String,
+
+    #[serde(rename = "gpuUtilPercent")]
+    pub gpu_util_percent: i64,
+
+    #[serde(rename = "memoryUtilPercent")]
+    pub memory_util_percent: i64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PodContainerStats {
+    #[serde(rename = "cpuPercent")]
+    pub cpu_percent: i64,
+
+    #[serde(rename = "memoryPercent")]
+    pub memory_percent: i64,
+}
+
 // -----------------------------------------------------------------------------
 // REST Data Structures
 // -----------------------------------------------------------------------------
@@ -2541,6 +2666,16 @@ mod tests {
                 }
             }
 
+            println!("Fetching my pods with ports...");
+            match client.fetch_my_pods_with_ports().await {
+                Ok(pods) => {
+                    println!("\nPods ports: {:?}", pods);
+                }
+                Err(e) => {
+                    println!("Error getting pods: {:?}", e);
+                }
+            }
+
             println!("Fetching my pods...");
             match client.fetch_my_pods().await {
                 Ok(pods) => {
@@ -2559,8 +2694,6 @@ mod tests {
                     println!("Error getting pods: {:?}", e);
                 }
             }
-
-            tokio::time::sleep(tokio::time::Duration::from_secs(20000)).await;
 
             // Now delete the pod
             client
