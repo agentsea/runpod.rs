@@ -866,7 +866,7 @@ impl RunpodClient {
         // Build the initial JSON
         let mut payload = serde_json::json!({
             "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
-            "computeType": "GPU",
+            "computeType": req.compute_type.unwrap_or("GPU".to_string()),
             "gpuCount": req.gpu_count.unwrap_or(1),
             "volumeInGb": req.volume_in_gb.unwrap_or(20),
             "containerDiskInGb": req.container_disk_in_gb.unwrap_or(50),
@@ -2394,6 +2394,7 @@ pub struct Template {
 pub struct CreateOnDemandPodRequest {
     pub cloud_type: Option<String>,
     pub gpu_count: Option<i32>, // not directly used by REST
+    pub compute_type: Option<String>,
     pub volume_in_gb: Option<i32>,
     pub container_disk_in_gb: Option<i32>,
     pub min_vcpu_count: Option<i32>,
@@ -2620,6 +2621,7 @@ mod tests {
             cloud_type: Some("SECURE".to_string()),
             gpu_count: Some(1),
             volume_in_gb: Some(20),
+            compute_type: Some("GPU".to_string()),
             container_disk_in_gb: Some(50),
             min_vcpu_count: Some(4),
             min_memory_in_gb: Some(16),
