@@ -864,25 +864,54 @@ impl RunpodClient {
         req: CreateOnDemandPodRequest,
     ) -> Result<PodCreateResponseData, reqwest::Error> {
         // Build the initial JSON
-        let mut payload = serde_json::json!({
-            "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
-            "computeType": req.compute_type.unwrap_or("GPU".to_string()),
-            "gpuCount": req.gpu_count.unwrap_or(1),
-            "volumeInGb": req.volume_in_gb.unwrap_or(20),
-            "containerDiskInGb": req.container_disk_in_gb.unwrap_or(50),
-            "minVCPUPerGPU": req.min_vcpu_count.unwrap_or(2),
-            "minRAMPerGPU": req.min_memory_in_gb.unwrap_or(8),
-            "gpuTypeIds": [req.gpu_type_id.unwrap_or_default()],
-            "name": req.name.unwrap_or_default(),
-            "imageName": req.image_name.unwrap_or_default(),
-            "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default(),
-            "supportPublicIp": true,
-            "ports": req.ports,
-            "env": req.env
-                .into_iter()
-                .map(|e| (e.key, e.value))
-                .collect::<std::collections::HashMap<_, _>>(),
-        });
+        let compute_type = req.compute_type.unwrap_or("GPU".to_string());
+
+        let mut payload = match compute_type.as_str() {
+            "GPU" => {
+                let payload = serde_json::json!({
+                "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
+                "computeType": compute_type,
+                "gpuCount": req.gpu_count.unwrap_or(1),
+                "volumeInGb": req.volume_in_gb.unwrap_or(20),
+                "containerDiskInGb": req.container_disk_in_gb.unwrap_or(50),
+                "minVCPUPerGPU": req.min_vcpu_count.unwrap_or(2),
+                "minRAMPerGPU": req.min_memory_in_gb.unwrap_or(8),
+                "gpuTypeIds": [req.gpu_type_id.unwrap_or_default()],
+                "name": req.name.unwrap_or_default(),
+                "imageName": req.image_name.unwrap_or_default(),
+                "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default(),
+                "supportPublicIp": false,
+                "ports": req.ports,
+                "env": req.env
+                    .into_iter()
+                    .map(|e| (e.key, e.value))
+                    .collect::<std::collections::HashMap<_, _>>(),
+                "containerRegistryAuthId": req.container_registry_auth_id.unwrap_or_default(),
+                });
+                payload
+            }
+            _ => {
+                let payload = serde_json::json!({
+                    "cloudType": req.cloud_type.unwrap_or("SECURE".to_string()),
+                    "computeType": compute_type,
+                    "volumeInGb": req.volume_in_gb.unwrap_or(20),
+                    "containerDiskInGb": req.container_disk_in_gb.unwrap_or(50),
+                    "minVCPUPerGPU": req.min_vcpu_count.unwrap_or(2),
+                    "minRAMPerGPU": req.min_memory_in_gb.unwrap_or(8),
+                    "name": req.name.unwrap_or_default(),
+                    "imageName": req.image_name.unwrap_or_default(),
+                    "dockerEntrypoint": req.docker_entrypoint.unwrap_or_default(),
+                    "supportPublicIp": false,
+                    "ports": req.ports,
+                    "containerRegistryAuthId": req.container_registry_auth_id.unwrap_or_default(),
+                    "env": req.env
+                        .into_iter()
+                        .map(|e| (e.key, e.value))
+                        .collect::<std::collections::HashMap<_, _>>(),
+                });
+                payload
+            }
+        };
 
         // If user provided a volumeMountPath, insert it; otherwise don't.
         if let Some(volume_mount_path) = req.volume_mount_path {
@@ -898,6 +927,8 @@ impl RunpodClient {
                 serde_json::Value::String(network_volume_id),
             );
         }
+
+        println!("create on demand pod payload: {}", json!(&payload.clone()));
 
         // Then do the request + status check, same as before...
         let response = self
@@ -2131,7 +2162,7 @@ pub struct PodInfoMinimalStop {
     pub desired_status: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvVar {
     pub key: String,
@@ -2408,6 +2439,7 @@ pub struct CreateOnDemandPodRequest {
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
+    pub container_registry_auth_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -2429,6 +2461,7 @@ pub struct CreateSpotPodRequest {
     pub network_volume_id: Option<String>,
     pub volume_mount_path: Option<String>,
     pub env: Vec<EnvVar>,
+    pub container_registry_auth_id: Option<String>,
 }
 
 impl CreateOnDemandPodRequest {
@@ -2639,8 +2672,9 @@ mod tests {
             ports: Some(vec!["8888/http".to_string(), "22/tcp".to_string()]),
             volume_mount_path: Some("/mnt/nebulous-test".to_string()),
             // volume_mount_path: Some("/workspace".to_string()),
-            env: env_vec,
-            network_volume_id: Some(volume.id),
+            env: env_vec.clone(),
+            network_volume_id: Some(volume.id.clone()),
+            container_registry_auth_id: None,
         };
 
         // Make the actual API call
@@ -2706,6 +2740,46 @@ mod tests {
         } else {
             panic!("No pod data returned");
         }
+
+        println!("creating cpu pod");
+        let request = CreateOnDemandPodRequest {
+            cloud_type: Some("SECURE".to_string()),
+            gpu_count: None,
+            volume_in_gb: Some(10),
+            compute_type: Some("CPU".to_string()),
+            container_disk_in_gb: Some(10),
+            min_vcpu_count: Some(1),
+            min_memory_in_gb: Some(1),
+            gpu_type_id: None,
+            name: Some("test_cpu_pod_from_rust".to_string()),
+            image_name: Some(
+                "runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel-ubuntu22.04".to_string(),
+            ),
+            docker_args: None,
+            docker_entrypoint: Some(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "while true; do echo \"Hello from Docker Entrypoint!\"; sleep 5; done".to_string(),
+            ]),
+            ports: Some(vec!["8888/http".to_string(), "22/tcp".to_string()]),
+            volume_mount_path: Some("/mnt/nebulous-test".to_string()),
+            // volume_mount_path: Some("/workspace".to_string()),
+            env: env_vec,
+            network_volume_id: None,
+            container_registry_auth_id: None,
+        };
+
+        // Make the actual API call
+        let result = client.create_on_demand_pod(request).await;
+
+        // Print any error details for debugging
+        if let Err(ref e) = result {
+            println!("\nError creating pod: {:?}", e);
+        }
+
+        // Verify the result
+        let pod_data = result.expect("Failed to create pod");
+        println!("\nPod created: {:?}", pod_data);
     }
 
     // #[tokio::test]
